@@ -1,0 +1,37 @@
+# --- Xcode ---
+# Build artifacts and temporary files
+build/
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# User-specific Xcode settings (Crucial for open source)
+*.xcuserstate
+project.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+XCUserData/
+workspace.xcuserdatad/
+xcuserdata/
+
+# Xcode Server and Bot files
+TeamCodeSigning/
+
+# --- Swift Package Manager ---
+.build/
+.swiftpm/
+xcodeobjdir/
+
+# --- Dependency Managers (Optional) ---
+# Un-comment if you use CocoaPods or Carthage
+# Pods/
+# Carthage/Build/
+
+# --- macOS System Files ---
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+
