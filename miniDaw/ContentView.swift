@@ -85,6 +85,10 @@ struct MainOptionsView: View {
                     onStop: bindableModel.stop_recording
                 )
             }
+            
+            TimelineBar(model: model)
+            .frame(width: 135)
+            .padding(.bottom)
         }
         .padding()
     }
@@ -154,6 +158,7 @@ struct PlayButton: View {
             Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                 .frame(width: 16, height: 16)
         }
+        .keyboardShortcut(.space, modifiers: [])
     }
 }
 
@@ -176,6 +181,7 @@ struct RecordButton: View {
                 .frame(width: 16, height: 16)
         }
         .tint(isRecording ? .red : nil)
+        .keyboardShortcut("r", modifiers: [])
     }
 }
 
@@ -189,6 +195,7 @@ struct RewindButton: View {
             Image(systemName: "backward.end")
                 .frame(width: 16, height: 16)
         }
+        .keyboardShortcut("b", modifiers: [])
     }
 }
 
@@ -253,8 +260,33 @@ struct VolumeSlider: View {
     }
 }
 
+struct TimelineBar: View {
+    var model: AudioEngineModel
+    
+    var body: some View {
+        TimelineView(.animation) { timelineContext in
+            let progress = max(0.0, min(model.currTimeSeconds / model.TimelineLengthSeconds, 1.0))
+            VStack {
+                // Custom Progress Bar container
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.gray.opacity(0.2))
+                        
+                        Capsule()
+                            .fill(Color.blue)
+                            .frame(width: geo.size.width * CGFloat(progress))
+                    }
+                }
+                .frame(height: 12)
+                .padding()
+            }
+        }
+    }
+}
+
 #Preview {
     ContentView()
-        .environment(AudioEngineModel()) // Inject it here specifically for the preview!
+        .environment(AudioEngineModel())
 }
 
