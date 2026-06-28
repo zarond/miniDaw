@@ -33,7 +33,7 @@ class AudioEngineModel {
         }
     }
     
-    var samplesPerBeat: Double = 1.0
+    private var samplesPerBeat: Double = 1.0
     
     var isPlaying: Bool = false {
         didSet {
@@ -53,8 +53,8 @@ class AudioEngineModel {
     var nextBeatTime = AVAudioFramePosition()   // relative time on timeline
     var nextBeatNumber : Int = 0
     
-    var debugClock = ContinuousClock()
-    var debugPrevMoment : ContinuousClock.Instant?
+    private var debugClock = ContinuousClock()
+    private var debugPrevMoment : ContinuousClock.Instant?
     
     var currTimeSeconds: TimeInterval = 0.0
     var TimelineLengthSeconds: TimeInterval = 1.0
@@ -72,6 +72,8 @@ class AudioEngineModel {
     var metronomeOn: Bool = true
     var preCount: Bool = false
     var looping: Bool = false
+    
+    private var nextLoopPlanned : Bool = false
     
     var TimeSignatureHigh: Int = 4 {
         didSet {
@@ -116,7 +118,7 @@ class AudioEngineModel {
     
     private func configureEngine() {
         engine.attach(metronomePlayer)
-        //engine.attach(BTPlayer)
+        engine.attach(BTPlayer)
         
         let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
 
@@ -125,10 +127,10 @@ class AudioEngineModel {
             to: engine.mainMixerNode,
             format: hardwareFormat)
         
-        //engine.connect(
-        //    BTPlayer,
-        //    to: engine.mainMixerNode,
-        //    format: BTAudioFile?.processingFormat)
+        engine.connect(
+            BTPlayer,
+            to: engine.mainMixerNode,
+            format: hardwareFormat)
 
         engine.prepare()
         
@@ -240,6 +242,15 @@ class AudioEngineModel {
         }
     }
     
+    func scheduleBT(force_full_loop : Bool = false) {
+        guard let file = BTAudioFile else { return }
+        let start_frame = force_full_loop ? 0 : AVAudioFramePosition(currTimeSeconds * BTAudioSampleRate)
+        let number_frames = AVAudioFrameCount(
+            max(min(AVAudioFramePosition(TimelineLengthSeconds * BTAudioSampleRate), BTAudioLengthSamples) - start_frame, 0)
+        )
+        BTPlayer.scheduleSegment(file, startingFrame: start_frame, frameCount: number_frames, at: nil) {}
+    }
+    
     func setupAnimation() {
         if let mainScreen = NSScreen.main {
             displayLink = mainScreen.displayLink(target: self, selector: #selector(updateAnimation))
@@ -247,7 +258,7 @@ class AudioEngineModel {
         }
     }
     
-    @objc func updateAnimation(displaylink: CADisplayLink) {
+    @objc func updateAnimation(displaylink: CADisplayLink) { // updating needle position on timeline and scheduling upcoming events
         if (isPlaying) {
             update_current_time()
             if (metronomeOn) {
@@ -259,6 +270,11 @@ class AudioEngineModel {
                 metronomePlayer.stop()
             }
             update_current_time_seconds()
+            if (looping) {
+                setupNextLoop() // try to set up next loop if near the end of the timeline
+            } else if (currTime > TimelineLength) {
+                stop()
+            }
         }
     }
     
@@ -272,8 +288,12 @@ class AudioEngineModel {
         guard !isPlaying else { return }
         isPlaying = true
         
-        guard let now = engine.outputNode.lastRenderTime else { return }
-        startTime = now.sampleTime - currTime
+        if (currTime > TimelineLength) {
+            reset_to_begining()
+        } else {
+            guard let now = engine.outputNode.lastRenderTime else { return }
+            startTime = now.sampleTime - currTime
+        }
         
         update_current_time_seconds()
         
@@ -286,8 +306,7 @@ class AudioEngineModel {
             }
         }
         
-        guard let file = BTAudioFile else { return }
-        BTPlayer.scheduleFile(file, at: nil) {}
+        scheduleBT()
         BTPlayer.play()
     }
     
@@ -295,6 +314,7 @@ class AudioEngineModel {
         metronomePlayer.stop()
         BTPlayer.stop()
         nextBeatNumber = 0
+        nextLoopPlanned = false
         
         update_current_time()
         update_current_time_seconds()
@@ -302,6 +322,20 @@ class AudioEngineModel {
         isPlaying = false
         if (isRecording) {
             stop_recording()
+        }
+    }
+    
+    private func setupNextLoop() {
+        if (nextLoopPlanned) {
+            if (currTime < TimelineLength / 4) {
+                nextLoopPlanned = false
+            }
+            return
+        }
+        if (currTime > TimelineLength * 3 / 4) {
+            nextLoopPlanned = true
+            
+            scheduleBT( force_full_loop: true )
         }
     }
     
@@ -320,6 +354,7 @@ class AudioEngineModel {
         startTime = now.sampleTime
         currTime = AVAudioFramePosition(0)
         currTimeSeconds = 0.0
+        nextLoopPlanned = false
         
         if (metronomeOn) {
             metronomePlayer.stop()
@@ -327,6 +362,11 @@ class AudioEngineModel {
             if (isPlaying && isOnBeat()) {
                 scheduleMetronomeTick(play_now: true)
             }
+        }
+        if (isPlaying) {
+            BTPlayer.stop()
+            scheduleBT()
+            BTPlayer.play()
         }
         
         nextBeatNumber = 0
@@ -344,6 +384,10 @@ class AudioEngineModel {
     func update_current_time() {
         guard let now = engine.outputNode.lastRenderTime else { return }
         currTime = now.sampleTime - startTime
+        if (looping && currTime > TimelineLength) {
+            currTime -= TimelineLength
+            startTime += TimelineLength
+        }
     }
     
     func update_current_time_seconds() { // for visual feedback
