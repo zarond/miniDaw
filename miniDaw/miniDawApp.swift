@@ -91,9 +91,8 @@ class AudioEngineModel {
     
     var EngineSampleRate : Double = 44100.0
     
-    var metronomeAudioFile : AVAudioFile?
-    var metronomeAudioLengthSamples = AVAudioFramePosition()
-    var metronomeAudioSampleRate : Double = 44100
+    var metronomeAudioBuffer = AVAudioPCMBuffer()
+    var metronomeHighAudioBuffer = AVAudioPCMBuffer()
     
     var BTAudioFile : AVAudioFile?
     var BTAudioLengthSamples = AVAudioFramePosition()
@@ -110,23 +109,9 @@ class AudioEngineModel {
     }
     
     private func setupAudio() {
-        guard let url = Bundle.main.url(forResource: "metronome_bip", withExtension: "wav") else {
-            print("Audio file 'metronome_bip.wav' not found in bundle.")
-            return
-        }
-        
-        do {
-            let file = try AVAudioFile(forReading: url)
-            let format = file.processingFormat
-            
-            metronomeAudioLengthSamples = file.length
-            metronomeAudioSampleRate = format.sampleRate
-            metronomeAudioFile = file
-            
-            configureEngine()
-        } catch {
-            print("Error reading audio file: \(error)")
-        }
+        configureEngine()
+        loadAudioFileToBuffer(file_name: "metronome_bip", file_extension: "wav", outputBufferRef: &metronomeAudioBuffer)
+        loadAudioFileToBuffer(file_name: "metronome_bip_high", file_extension: "wav", outputBufferRef: &metronomeHighAudioBuffer)
     }
     
     private func configureEngine() {
@@ -159,6 +144,41 @@ class AudioEngineModel {
         }
     }
     
+    private func loadAudioFileToBuffer(file_name: String, file_extension: String, outputBufferRef: inout AVAudioPCMBuffer) {
+        guard let url = Bundle.main.url(forResource: file_name, withExtension: file_extension) else {
+            print("Audio file '\(file_name)' not found in bundle.")
+            return
+        }
+        do {
+            let file = try AVAudioFile(forReading: url)
+            
+            let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
+            
+            // Create a format converter to translate file format -> hardware format
+            let converter = AVAudioConverter(from: file.processingFormat, to: hardwareFormat)
+            
+            let file_length_seconds = Double(file.length) / file.processingFormat.sampleRate
+            
+            // Allocate a buffer matching the hardware format
+            let inputFileFrameCount = AVAudioFrameCount(file.length)
+            let outputFileFrameCount = AVAudioFrameCount(file_length_seconds * hardwareFormat.sampleRate)
+            guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: inputFileFrameCount),
+                  let outputBuffer = AVAudioPCMBuffer(pcmFormat: hardwareFormat, frameCapacity: outputFileFrameCount) else { return }
+            
+            try? file.read(into: inputBuffer)
+            
+            // Convert the audio data permanently into the hardware sample rate
+            var error: NSError?
+            converter?.convert(to: outputBuffer, error: &error) { inNumPackets, outStatus in
+                outStatus.pointee = .haveData
+                return inputBuffer
+            }
+            outputBufferRef = outputBuffer
+        } catch {
+            print("Error reading audio file: \(error)")
+        }
+    }
+    
     private func configureLowLatencyBuffer() {
         // 1. Get the hardware ID of the current output device
         let outputNode = engine.outputNode
@@ -185,11 +205,11 @@ class AudioEngineModel {
     }
     
     func scheduleMetronomeTick(play_now: Bool = false) {
-        guard let file = metronomeAudioFile else { return }
-        
         update_current_time()
         
-        let calcNextBeatNumber : Int = Int(ceil(Double(currTime) / samplesPerBeat))
+        let calcNextBeatNumber : Int = play_now ?
+            Int(round(Double(currTime) / samplesPerBeat)) :
+            Int(ceil(Double(currTime) / samplesPerBeat))
         
         if (calcNextBeatNumber == nextBeatNumber && !play_now) { return }
         
@@ -204,8 +224,10 @@ class AudioEngineModel {
             when = metronomePlayer.playerTime(forNodeTime: engineWhen)
         }
         
+        let strongBeat = nextBeatNumber.isMultiple(of: TimeSignatureHigh)
         print("tick 1")
-        metronomePlayer.scheduleFile(file, at: when, completionCallbackType : .dataPlayedBack)
+        let audio_buffer = strongBeat ? metronomeHighAudioBuffer : metronomeAudioBuffer
+        metronomePlayer.scheduleBuffer(audio_buffer, at: when, completionCallbackType : .dataPlayedBack)
         { callbacktype in
             print("tick 2")
             let debug_now = self.debugClock.now
