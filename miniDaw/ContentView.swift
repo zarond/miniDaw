@@ -10,7 +10,11 @@ internal import UniformTypeIdentifiers
 
 struct ContentView: View {
     var body: some View {
-        MainOptionsView()
+        HStack() {
+            MainOptionsView()
+            Divider()
+            WorkWindowView()
+        }
     }
 }
 
@@ -21,14 +25,14 @@ struct MainOptionsView: View {
         // Create a bindable reference locally to allow the use of '$'
         @Bindable var bindableModel = model
         
-        VStack() {
-            Image(systemName: "music.pages")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, DAW!")
-        }
-        
         VStack(alignment: .leading) {
+            HStack() {
+                Image(systemName: "music.pages")
+                    .imageScale(.large)
+                    .foregroundStyle(.tint)
+                Text("Hello, DAW!")
+            }
+            
             NumericalFieldWithStepper(
                 mainValue: $bindableModel.bpm,
                 minValue: AudioEngineModel.minBPM,
@@ -85,12 +89,10 @@ struct MainOptionsView: View {
                     onStop: bindableModel.stop_recording
                 )
             }
-            
-            TimelineBar(model: model)
-            .frame(width: 135)
             .padding(.bottom)
         }
-        .padding()
+        .padding(.leading)
+        .frame(minWidth: 160)
     }
 }
 
@@ -257,31 +259,6 @@ struct VolumeSlider: View {
     var body: some View {
         Slider(value: $volume, in: 0...1)
             .frame(width: 135)
-    }
-}
-
-struct TimelineBar: View {
-    var model: AudioEngineModel
-    
-    var body: some View {
-        TimelineView(.animation) { timelineContext in
-            let progress = max(0.0, min(model.currTimeSeconds / model.TimelineLengthSeconds, 1.0))
-            VStack {
-                // Custom Progress Bar container
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Color.gray.opacity(0.2))
-                        
-                        Capsule()
-                            .fill(Color.blue)
-                            .frame(width: geo.size.width * CGFloat(progress))
-                    }
-                }
-                .frame(height: 12)
-                .padding()
-            }
-        }
     }
 }
 

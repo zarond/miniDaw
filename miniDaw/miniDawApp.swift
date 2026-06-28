@@ -372,6 +372,19 @@ class AudioEngineModel {
         nextBeatNumber = 0
     }
     
+    func set_to_relative_position(_ position: Double) {
+        let wasPlaying = isPlaying
+        if (wasPlaying) {
+            stop()
+        }
+        currTime = AVAudioFramePosition(position * Double(TimelineLength))
+        if (wasPlaying) {
+            start()
+        } else {
+            update_current_time_seconds()
+        }
+    }
+    
     private func recalculate_timeline_length() {
         TimelineLengthSeconds = Double(numBars * TimeSignatureHigh * 60)/Double(bpm)
         TimelineLength = AVAudioFramePosition(TimelineLengthSeconds * EngineSampleRate)
