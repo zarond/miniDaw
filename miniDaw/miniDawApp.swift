@@ -254,7 +254,7 @@ class AudioEngineModel {
     func setupAnimation() {
         if let mainScreen = NSScreen.main {
             displayLink = mainScreen.displayLink(target: self, selector: #selector(updateAnimation))
-            displayLink.add(to: .current, forMode: .default)
+            displayLink.add(to: .current, forMode: .common)
         }
     }
     
@@ -372,12 +372,17 @@ class AudioEngineModel {
         nextBeatNumber = 0
     }
     
-    func set_to_relative_position(_ position: Double) {
+    func set_to_relative_position(_ position: Double, snapToBeat: Bool = false) {
         let wasPlaying = isPlaying
         if (wasPlaying) {
             stop()
         }
-        currTime = AVAudioFramePosition(position * Double(TimelineLength))
+        if (snapToBeat) {
+            let beatNumber = Int(round(Double(position * Double(TimelineLength)) / samplesPerBeat))
+            currTime = AVAudioFramePosition(Double(beatNumber) * samplesPerBeat)
+        } else {
+            currTime = AVAudioFramePosition(position * Double(TimelineLength))
+        }
         if (wasPlaying) {
             start()
         } else {
