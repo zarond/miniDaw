@@ -75,21 +75,7 @@ struct MainOptionsView: View {
             Text("Output Sound Volume:")
                 .padding(.top, 10)
             VolumeSlider(volume: $bindableModel.volume)
-            
-            HStack{
-                RewindButton(onPress: bindableModel.reset_to_begining)
-                PlayButton(
-                    isPlaying: $bindableModel.isPlaying,
-                    onStart: bindableModel.start,
-                    onStop: bindableModel.stop
-                )
-                RecordButton(
-                    isRecording: $bindableModel.isRecording,
-                    onStart: bindableModel.start_recording,
-                    onStop: bindableModel.stop_recording
-                )
-            }
-            .padding(.bottom)
+                .frame(width: 135)
         }
         .padding(.leading)
         .frame(minWidth: 160)
@@ -258,12 +244,15 @@ struct VolumeSlider: View {
     @Binding var volume: Float
     var body: some View {
         Slider(value: $volume, in: 0...1)
-            .frame(width: 135)
     }
 }
 
 #Preview {
-    ContentView()
-        .environment(AudioEngineModel())
+    var model = AudioEngineModel()
+    model.Tracks = [
+        Track(name: "Track 1", type: .backingTrack),
+        Track(name: "Track 2", type: .backingTrack)
+    ]
+    return ContentView().environment(model)
 }
 

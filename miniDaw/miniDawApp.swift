@@ -102,6 +102,8 @@ class AudioEngineModel {
     
     var displayLink = CADisplayLink()
     
+    var Tracks : [Track] = []
+    
     init() {
         setupAudio()
         recalculate_timeline_length()
@@ -431,9 +433,19 @@ class AudioEngineModel {
                 BTAudioLengthSamples = file.length
                 BTAudioSampleRate = format.sampleRate
                 BTAudioFile = file
+                
+                Tracks.append(Track(name: "Backing Track", type: .backingTrack))
             } catch {
                 print("Error reading audio file: \(error)")
             }
         }
+    }
+    
+    func create_recording_track(){
+        Tracks.append(Track(name: "Recording Track", type: .recordingTrack))
+    }
+    
+    func delete_track(id: UUID?){
+        Tracks.removeAll(where: {$0.id == id})
     }
 }

@@ -18,12 +18,16 @@ struct WorkWindowView: View {
         @Bindable var bindableModel = model
         
         VStack() {
-            TimelineWindowView(
-                model: model,
-                isDragging: $isDraggingNeedle,
-                dragProgress: $NeedleDragProgress,
-                snapToBeat: snapToBeat
-            )
+            HStack(spacing: 0) {
+                TracksView(model: model)
+                
+                TimelineWindowView(
+                    model: model,
+                    isDragging: $isDraggingNeedle,
+                    dragProgress: $NeedleDragProgress,
+                    snapToBeat: snapToBeat
+                )
+            }
             HStack() {
                 Toggle(
                     "Snap to Beat",
@@ -31,6 +35,20 @@ struct WorkWindowView: View {
                     isOn: $snapToBeat
                 )
                 .padding(.horizontal)
+                Spacer()
+                
+                RewindButton(onPress: bindableModel.reset_to_begining)
+                PlayButton(
+                    isPlaying: $bindableModel.isPlaying,
+                    onStart: bindableModel.start,
+                    onStop: bindableModel.stop
+                )
+                RecordButton(
+                    isRecording: $bindableModel.isRecording,
+                    onStart: bindableModel.start_recording,
+                    onStop: bindableModel.stop_recording
+                )
+
                 Spacer()
             }
             Divider()
@@ -230,7 +248,146 @@ struct Triangle: Shape {
     }
 }
 
+struct TracksView: View {
+    var model: AudioEngineModel
+    
+    @FocusState private var selectedID: UUID?
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1){
+            Rectangle()
+                .fill(Color(white: 0.2))
+                .frame(width: 205, height: 20)
+            
+            ForEach(model.Tracks) { track in
+                TrackView(track: track, isFocused: selectedID == track.id)
+                    .focusable()
+                    .focused($selectedID, equals: track.id)
+                    .focusEffectDisabled()
+                    .onDeleteCommand {
+                        model.delete_track(id: selectedID)
+                    }
+            }
+            
+            Spacer()
+            
+            BottomButtons(model: model, selectedID: selectedID)
+                .frame(width: 205)
+        }
+        .background(Color(white: 0.15))
+    }
+}
+
+struct TrackView: View {
+    let track: Track
+    let isFocused: Bool
+    
+    var body: some View {
+        @Bindable var bindableTrack = track
+        
+        ZStack(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(isFocused ? Color.teal : Color.gray)
+                .frame(width: 205, height: 40)
+            
+            HStack() {
+                EditableNameTextField(name: $bindableTrack.name)
+                    .frame(maxWidth: 80)
+                
+                VolumeSlider(volume: $bindableTrack.volume)
+                    .frame(width: 60)
+                
+                Toggle(isOn: $bindableTrack.mute) {
+                    Image(systemName: "speaker.slash")
+                    .font(.system(size: 10, weight: .medium))
+                }
+                .frame(width: 16, height: 8)
+                .toggleStyle(.button)
+                
+                if (track.type == .recordingTrack) {
+                    Toggle(isOn: $bindableTrack.monitorOn) {
+                        Image(systemName: "microphone")
+                        .font(.system(size: 10, weight: .medium))
+                    }
+                    .frame(width: 16, height: 8)
+                    .toggleStyle(.button)
+                }
+            }
+        }
+    }
+}
+
+struct EditableNameTextField: View {
+    @State private var isEditing: Bool = false
+    @State private var text: String = ""
+    @FocusState private var isTextFieldFocused: Bool // Auto-focuses the keyboard/cursor
+    @Binding var name: String
+    
+    private func ApplyName() {
+        isEditing = false
+        let trimmed_text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if (!trimmed_text.isEmpty) {
+            name = trimmed_text
+        } else {
+            name = "Untitled"
+        }
+        text = name
+    }
+    var body: some View {
+        if (isEditing) {
+            TextField(name, text: $text)
+                .focused($isTextFieldFocused)
+                .onSubmit {
+                    ApplyName()
+                }
+                .onChange(of: isTextFieldFocused) { _, newValue in
+                    if !newValue {
+                        ApplyName()
+                    }
+                }
+        } else {
+            Text(name)
+                .onTapGesture(count: 2) {
+                    isEditing = true
+                    isTextFieldFocused = true
+                }
+        }
+    }
+}
+
+struct BottomButtons: View {
+    var model: AudioEngineModel
+    
+    let selectedID: UUID?
+    
+    var body: some View {
+        HStack() {
+            Button {
+                model.create_recording_track()
+            } label: {
+                Image(systemName: "plus" )
+                    .frame(width: 0, height: 8)
+            }
+            
+            Button {
+                model.delete_track(id: selectedID)
+            } label: {
+                Image(systemName: "minus" )
+                    .frame(width: 0, height: 8)
+            }
+            
+            Spacer()
+        }
+        .padding(2)
+        .background(Color(white: 0.9))
+    }
+}
+
 #Preview {
-    WorkWindowView()
-        .environment(AudioEngineModel())
+    var model = AudioEngineModel()
+    model.Tracks = [
+        Track(name: "Track 1", type: .backingTrack),
+        Track(name: "Track 2", type: .recordingTrack)
+    ]
+    return WorkWindowView().environment(model)
 }
