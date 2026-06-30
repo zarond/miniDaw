@@ -250,8 +250,8 @@ class AudioEngineModel {
         Tracks.forEach { $0.stop() }
     }
     
-    func ScheduleTracks(force_full_loop : Bool = false){
-        Tracks.forEach { $0.schedule(force_full_loop: force_full_loop) }
+    func ScheduleTracks(prepare_next_loop : Bool = false){
+        Tracks.forEach { $0.schedule(prepare_next_loop: prepare_next_loop) }
     }
     
     func setupAnimation() {
@@ -349,7 +349,7 @@ class AudioEngineModel {
         if (currTime > TimelineLength * 3 / 4) {
             nextLoopPlanned = true
             
-            ScheduleTracks( force_full_loop: true )
+            ScheduleTracks( prepare_next_loop: true )
         }
     }
     

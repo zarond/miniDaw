@@ -40,6 +40,7 @@ class Track: Identifiable {
     var BTAudioFile : AVAudioFile?
     var BTAudioLengthSamples = AVAudioFramePosition()
     var BTAudioSampleRate : Double = 44100
+    var AudioLengthSeconds : Double = 4.0
     
     init(name: String, type: TrackType, audioFile: AVAudioFile? = nil) {
         self.name = name
@@ -49,6 +50,11 @@ class Track: Identifiable {
             BTAudioFile = audioFile
             BTAudioLengthSamples = audioFile.length
             BTAudioSampleRate = audioFile.fileFormat.sampleRate
+            AudioLengthSeconds = Double(BTAudioLengthSamples) / BTAudioSampleRate
+        }
+        
+        if (type == .recordingTrack) {
+            AudioLengthSeconds = 0.0
         }
         
         guard let engine = Track.engine else { return }
@@ -69,18 +75,19 @@ class Track: Identifiable {
         BTPlayer.stop()
     }
     
-    func schedule(force_full_loop : Bool = false) {
+    func schedule(prepare_next_loop : Bool = false) {
         guard let file = BTAudioFile else { return }
         guard let model = Track.model else { return }
         
-        if (model.currTimeSeconds >= 0) {
-            let start_frame = force_full_loop ? 0 : AVAudioFramePosition(model.currTimeSeconds * BTAudioSampleRate)
+        if (!prepare_next_loop && model.currTimeSeconds >= 0) {
+            let start_frame = AVAudioFramePosition(model.currTimeSeconds * BTAudioSampleRate)
             let number_frames = AVAudioFrameCount(
                 max(AVAudioFramePosition(model.TimelineLengthSeconds * BTAudioSampleRate) - start_frame, 0)
             )
             BTPlayer.scheduleSegment(file, startingFrame: start_frame, frameCount: number_frames, at: nil) {}
         } else {
-            let engineWhen = AVAudioTime(sampleTime: model.startTime, atRate: model.EngineSampleRate)
+            let sampleTime = model.startTime + (prepare_next_loop ? model.TimelineLength : 0)
+            let engineWhen = AVAudioTime(sampleTime: sampleTime, atRate: model.EngineSampleRate)
             let when = BTPlayer.playerTime(forNodeTime: engineWhen)
             let number_frames = AVAudioFrameCount(AVAudioFramePosition(model.TimelineLengthSeconds * BTAudioSampleRate))
             BTPlayer.scheduleSegment(file, startingFrame: 0, frameCount: number_frames, at: when) {}

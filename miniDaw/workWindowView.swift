@@ -150,6 +150,7 @@ struct TimelineWindowView: View {
                 let rulerWidth = geo.size.width
                 let beatSpacing = max(rulerWidth / CGFloat(totalBeats), 8)
                 let timeline_width = beatSpacing * CGFloat(totalBeats)
+                let oneSecondLength = (Double(model.bpm) / 60.0) * beatSpacing
                 
                 ZStack(alignment: .topLeading) {
                     Rectangle()
@@ -177,6 +178,16 @@ struct TimelineWindowView: View {
                             .foregroundColor(.white)
                             .offset(x: x + 4, y: 2)
                     }
+                    
+                    // Regions
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(model.Tracks) { track in
+                            RegionView(
+                                track: track,
+                                oneSecondLength: oneSecondLength,
+                                maxLength: timeline_width)
+                        }
+                    }.offset(y: rulerHeight + 1)
                     
                     // Needle
                     NeedleView(
@@ -356,6 +367,21 @@ struct EditableNameTextField: View {
     }
 }
 
+struct RegionView: View {
+    let track: Track
+    let oneSecondLength: CGFloat
+    let maxLength: CGFloat
+    
+    var body: some View {
+        let length: CGFloat = min(track.AudioLengthSeconds * oneSecondLength, maxLength)
+        
+        RoundedRectangle(cornerRadius: 5)
+            .fill(track.type == .backingTrack ? Color.green :  Color.red)
+            .frame(width: length, height: 40)
+            .shadow(radius: 3)
+    }
+}
+
 struct BottomButtons: View {
     var model: AudioEngineModel
     
@@ -401,7 +427,8 @@ struct BottomButtons: View {
     var model = AudioEngineModel()
     model.Tracks = [
         Track(name: "Track 1", type: .backingTrack),
-        Track(name: "Track 2", type: .recordingTrack)
+        Track(name: "Track 2", type: .backingTrack),
+        Track(name: "Track 3", type: .recordingTrack)
     ]
     return WorkWindowView().environment(model)
 }
