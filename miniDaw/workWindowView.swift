@@ -58,7 +58,7 @@ struct WorkWindowView: View {
                 dragProgress: $NeedleDragProgress
             )
         }
-        .frame(minWidth: 160)
+        .frame(minWidth: 500)
     }
 }
 
@@ -348,6 +348,7 @@ struct EditableNameTextField: View {
         } else {
             Text(name)
                 .onTapGesture(count: 2) {
+                    text = name
                     isEditing = true
                     isTextFieldFocused = true
                 }
@@ -377,6 +378,19 @@ struct BottomButtons: View {
             }
             
             Spacer()
+            
+            Button {
+                model.move_track(id: selectedID, direction: .up)
+            } label: {
+                Image(systemName: "arrowshape.up" )
+                    .frame(width: 0, height: 8)
+            }
+            Button {
+                model.move_track(id: selectedID, direction: .down)
+            } label: {
+                Image(systemName: "arrowshape.down" )
+                    .frame(width: 0, height: 8)
+            }
         }
         .padding(2)
         .background(Color(white: 0.9))

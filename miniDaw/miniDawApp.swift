@@ -448,4 +448,23 @@ class AudioEngineModel {
     func delete_track(id: UUID?){
         Tracks.removeAll(where: {$0.id == id})
     }
+    
+    enum MoveDirection {
+        case up, down
+    }
+    
+    func move_track(id: UUID?, direction: MoveDirection){
+        let element_index = Tracks.firstIndex(where: {$0.id == id})
+        guard let element_index = element_index else { return }
+        switch direction {
+        case .up:
+            if element_index > 0 {
+                Tracks.swapAt(element_index, element_index - 1)
+            }
+        case .down:
+            if element_index < Tracks.count - 1 {
+                Tracks.swapAt(element_index, element_index + 1)
+            }
+        }
+    }
 }
