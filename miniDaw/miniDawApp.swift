@@ -71,6 +71,7 @@ class AudioEngineModel {
     }
     var metronomeOn: Bool = true
     var preCount: Bool = false
+    private var preCountBeats: Int = 0
     var looping: Bool = false
     
     private var nextLoopPlanned : Bool = false
@@ -88,17 +89,13 @@ class AudioEngineModel {
     
     private var engine = AVAudioEngine()
     private let metronomePlayer = AVAudioPlayerNode()
-    private let BTPlayer = AVAudioPlayerNode()
+
     var isPlayerReady: Bool = false
     
     var EngineSampleRate : Double = 44100.0
     
     var metronomeAudioBuffer = AVAudioPCMBuffer()
     var metronomeHighAudioBuffer = AVAudioPCMBuffer()
-    
-    var BTAudioFile : AVAudioFile?
-    var BTAudioLengthSamples = AVAudioFramePosition()
-    var BTAudioSampleRate : Double = 44100
     
     var displayLink = CADisplayLink()
     
@@ -112,25 +109,25 @@ class AudioEngineModel {
         setupAnimation()
     }
     
+    deinit {
+        releaseResources()
+    }
+    
     private func setupAudio() {
         configureEngine()
         loadAudioFileToBuffer(file_name: "metronome_bip", file_extension: "wav", outputBufferRef: &metronomeAudioBuffer)
         loadAudioFileToBuffer(file_name: "metronome_bip_high", file_extension: "wav", outputBufferRef: &metronomeHighAudioBuffer)
+        Track.engine = self.engine
+        Track.model = self
     }
     
     private func configureEngine() {
         engine.attach(metronomePlayer)
-        engine.attach(BTPlayer)
         
         let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
 
         engine.connect(
             metronomePlayer,
-            to: engine.mainMixerNode,
-            format: hardwareFormat)
-        
-        engine.connect(
-            BTPlayer,
             to: engine.mainMixerNode,
             format: hardwareFormat)
 
@@ -208,14 +205,14 @@ class AudioEngineModel {
         }
     }
     
-    func scheduleMetronomeTick(play_now: Bool = false) {
+    func scheduleMetronomeTick(play_now: Bool = false) -> Bool {
         update_current_time()
         
         let calcNextBeatNumber : Int = play_now ?
             Int(round(Double(currTime) / samplesPerBeat)) :
             Int(ceil(Double(currTime) / samplesPerBeat))
         
-        if (calcNextBeatNumber == nextBeatNumber && !play_now) { return }
+        if (calcNextBeatNumber == nextBeatNumber && !play_now) { return false }
         
         nextBeatNumber = calcNextBeatNumber
         
@@ -242,15 +239,19 @@ class AudioEngineModel {
             }
             self.debugPrevMoment = debug_now
         }
+        return true
     }
     
-    func scheduleBT(force_full_loop : Bool = false) {
-        guard let file = BTAudioFile else { return }
-        let start_frame = force_full_loop ? 0 : AVAudioFramePosition(currTimeSeconds * BTAudioSampleRate)
-        let number_frames = AVAudioFrameCount(
-            max(min(AVAudioFramePosition(TimelineLengthSeconds * BTAudioSampleRate), BTAudioLengthSamples) - start_frame, 0)
-        )
-        BTPlayer.scheduleSegment(file, startingFrame: start_frame, frameCount: number_frames, at: nil) {}
+    func PlayTracks(){
+        Tracks.forEach { $0.play() }
+    }
+    
+    func StopTracks(){
+        Tracks.forEach { $0.stop() }
+    }
+    
+    func ScheduleTracks(force_full_loop : Bool = false){
+        Tracks.forEach { $0.schedule(force_full_loop: force_full_loop) }
     }
     
     func setupAnimation() {
@@ -263,11 +264,14 @@ class AudioEngineModel {
     @objc func updateAnimation(displaylink: CADisplayLink) { // updating needle position on timeline and scheduling upcoming events
         if (isPlaying) {
             update_current_time()
-            if (metronomeOn) {
+            if (metronomeOn || (preCount && preCountBeats <= TimeSignatureHigh)) {
                 if !metronomePlayer.isPlaying {
                     metronomePlayer.play()
                 }
-                scheduleMetronomeTick()
+                let click_scheduled = scheduleMetronomeTick()
+                if (click_scheduled) {
+                    preCountBeats += 1
+                }
             } else if metronomePlayer.isPlaying {
                 metronomePlayer.stop()
             }
@@ -282,7 +286,7 @@ class AudioEngineModel {
     
     func releaseResources() {
         metronomePlayer.stop()
-        BTPlayer.stop()
+        StopTracks()
         engine.stop()
     }
     
@@ -290,31 +294,39 @@ class AudioEngineModel {
         guard !isPlaying else { return }
         isPlaying = true
         
+        preCountBeats = 0
+        
         if (currTime > TimelineLength) {
             reset_to_begining()
         } else {
             guard let now = engine.outputNode.lastRenderTime else { return }
+            if (isRecording && preCount) {
+                currTime -= AVAudioFramePosition(samplesPerBeat * Double(TimeSignatureHigh))
+            }
             startTime = now.sampleTime - currTime
         }
         
         update_current_time_seconds()
         
-        if (metronomeOn) {
+        if (metronomeOn || preCount) {
             if !metronomePlayer.isPlaying {
                 metronomePlayer.play()
             }
             if (isOnBeat()) {
-                scheduleMetronomeTick(play_now: true)
+                let click_scheduled = scheduleMetronomeTick(play_now: true)
+                if (click_scheduled) {
+                    preCountBeats += 1
+                }
             }
         }
         
-        scheduleBT()
-        BTPlayer.play()
+        PlayTracks()
+        ScheduleTracks()
     }
     
     func stop() {
         metronomePlayer.stop()
-        BTPlayer.stop()
+        StopTracks()
         nextBeatNumber = 0
         nextLoopPlanned = false
         
@@ -337,7 +349,7 @@ class AudioEngineModel {
         if (currTime > TimelineLength * 3 / 4) {
             nextLoopPlanned = true
             
-            scheduleBT( force_full_loop: true )
+            ScheduleTracks( force_full_loop: true )
         }
     }
     
@@ -366,9 +378,9 @@ class AudioEngineModel {
             }
         }
         if (isPlaying) {
-            BTPlayer.stop()
-            scheduleBT()
-            BTPlayer.play()
+            StopTracks()
+            PlayTracks()
+            ScheduleTracks()
         }
         
         nextBeatNumber = 0
@@ -428,13 +440,9 @@ class AudioEngineModel {
             print("Loading file: ", file_url.path())
             do {
                 let file = try AVAudioFile(forReading: file_url)
-                let format = file.processingFormat
+                let new_track = Track(name: file_url.deletingPathExtension().lastPathComponent, type: .backingTrack, audioFile: file)
                 
-                BTAudioLengthSamples = file.length
-                BTAudioSampleRate = format.sampleRate
-                BTAudioFile = file
-                
-                Tracks.append(Track(name: "Backing Track", type: .backingTrack))
+                Tracks.append(new_track)
             } catch {
                 print("Error reading audio file: \(error)")
             }

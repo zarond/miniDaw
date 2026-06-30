@@ -59,7 +59,7 @@ struct MainOptionsView: View {
             )
             
             Toggle(
-                "Pre-count",
+                "Count-in",
                 systemImage: "numbers.rectangle",
                 isOn: $bindableModel.preCount
             )
