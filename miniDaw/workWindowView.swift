@@ -373,12 +373,20 @@ struct RegionView: View {
     let maxLength: CGFloat
     
     var body: some View {
-        let length: CGFloat = min(track.AudioLengthSeconds * oneSecondLength, maxLength)
+        let audio_length = track.AudioLengthSeconds * oneSecondLength
+        let length: CGFloat = min(audio_length, maxLength)
         
-        RoundedRectangle(cornerRadius: 5)
-            .fill(track.type == .backingTrack ? Color.green :  Color.red)
-            .frame(width: length, height: 40)
-            .shadow(radius: 3)
+        ZStack() {
+            RoundedRectangle(cornerRadius: 5)
+                .fill(track.type == .backingTrack ? Color.green :  Color.red)
+                .frame(width: length, height: 40)
+                .shadow(radius: 3)
+            
+            AudioWaveformView(
+                audio: track.BTAudioFile,
+                visibleRatio: (audio_length == 0.0) ? 0.0 : length / (audio_length)
+            ).frame(width: length, height: 40)
+        }
     }
 }
 
