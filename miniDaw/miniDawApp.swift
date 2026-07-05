@@ -460,6 +460,11 @@ class AudioEngineModel {
     
     func reset_to_begining(){
         guard let now = engine.outputNode.lastRenderTime else { return }
+        
+        if (isRecording) {
+            stop_recording()
+        }
+        
         startTime = now.sampleTime
         currTime = AVAudioFramePosition(0)
         currTimeSeconds = 0.0
@@ -473,7 +478,6 @@ class AudioEngineModel {
             }
         }
         if (isPlaying) {
-            stop_recording()
             StopTracks()
             PlayTracks()
             ScheduleTracks()
