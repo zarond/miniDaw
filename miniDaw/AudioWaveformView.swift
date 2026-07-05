@@ -11,7 +11,8 @@ import AVFoundation
 import Accelerate
 
 struct AudioWaveformView: View {
-    let audio : AVAudioFile?
+    let audio_file : AVAudioFile?
+    let audio_buffer : AVAudioPCMBuffer?
     let visibleRatio: Double
     
     @State private var data: [AudioPeak] = []
@@ -25,8 +26,13 @@ struct AudioWaveformView: View {
             )
             .foregroundStyle(Color.black.opacity(0.5))
         }
-        .task(id: audio) {
-            self.data = convertAudioToArray(audio)
+        .task(id: audio_file) {
+            if audio_file == nil { return }
+            self.data = convertAudioToArray(audio_file)
+        }
+        .task(id: audio_buffer) {
+            if audio_buffer == nil { return }
+            self.data = convertAudioToArray(audio_buffer)
         }
         .chartXScale(domain: 0...max(Int(visibleRatio * Double(data.count)) - 1, 0))
         .chartXAxis(.hidden)
@@ -42,10 +48,6 @@ fileprivate struct AudioPeak {
 
 fileprivate func convertAudioToArray(_ audioFile: AVAudioFile?) -> [AudioPeak] {
     guard let audioFile else { return [] }
-    
-    let lengthSeconds = Double(audioFile.length) / audioFile.processingFormat.sampleRate
-    let data_points_per_second: Int = 30
-    
     let totalFrames = AVAudioFrameCount(audioFile.length)
     
     guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat, frameCapacity: totalFrames) else {
@@ -57,7 +59,18 @@ fileprivate func convertAudioToArray(_ audioFile: AVAudioFile?) -> [AudioPeak] {
         try audioFile.read(into: buffer)
     } catch { return [] }
     
-    guard let channelData = buffer.floatChannelData else { return [] }
+    return convertAudioToArray(buffer)
+}
+
+fileprivate func convertAudioToArray(_ audioBuffer: AVAudioPCMBuffer?) -> [AudioPeak] {
+    guard let audioBuffer else { return [] }
+    
+    let lengthSeconds = Double(audioBuffer.frameLength) / audioBuffer.format.sampleRate
+    let data_points_per_second: Int = 30
+    
+    let totalFrames = AVAudioFrameCount(audioBuffer.frameLength)
+    
+    guard let channelData = audioBuffer.floatChannelData else { return [] }
     let allSamples = channelData[0]
     
     let pointsNumber = max(Int(lengthSeconds * Double(data_points_per_second)), 3)
@@ -87,5 +100,5 @@ fileprivate func convertAudioToArray(_ audioFile: AVAudioFile?) -> [AudioPeak] {
 #Preview("Sample Audio") {
     let url = Bundle.main.url(forResource: "metronome_bip", withExtension: "wav")
     let audioFile = try? url.flatMap { try AVAudioFile(forReading: $0) }
-    return AudioWaveformView(audio: audioFile, visibleRatio: 1.0)
+    return AudioWaveformView(audio_file: audioFile, audio_buffer: nil, visibleRatio: 1.0)
 }

@@ -100,8 +100,18 @@ class AudioEngineModel {
     var displayLink = CADisplayLink()
     
     var Tracks : [Track] = []
+    var currentlySelectedTrack: Track? = nil
+    var currentlyRecordingTrack: Track? = nil
+    
+    var inputNode: AVAudioInputNode?
+    var inputFormat = AVAudioFormat()
+    var inputRecordBuffer = AVAudioPCMBuffer()
+    var RecordTime = AVAudioFramePosition()         // relative time on timeline
+    var RecordStartTime = AVAudioFramePosition()    // relative time on timeline
+    var RecordStopTime = AVAudioFramePosition()     // relative time on timeline
     
     init() {
+        try? checkRecordingPermission()
         setupAudio()
         recalculate_timeline_length()
         recalculate_samples_per_beat()
@@ -119,12 +129,82 @@ class AudioEngineModel {
         loadAudioFileToBuffer(file_name: "metronome_bip_high", file_extension: "wav", outputBufferRef: &metronomeHighAudioBuffer)
         Track.engine = self.engine
         Track.model = self
+        create_recording_track()
+    }
+    
+    enum InputError: Error {
+        case permissionDenied
+        case unknownPermission
+        case builtinMicNotFound
+        case inputNotEnabled
+        
+        var message: String {
+            switch self  {
+            case .permissionDenied:
+                "Recording Permission Denied."
+            case .unknownPermission:
+                "Unknown Recording Permission."
+            case .builtinMicNotFound:
+                "Built in Mic is not found."
+            case .inputNotEnabled:
+                "Input node is not available to use"
+            }
+        }
+    }
+    
+    private func checkRecordingPermission() throws {
+        let permission = AVAudioApplication.shared.recordPermission
+        switch permission {
+            
+        case .undetermined:
+            AVAudioApplication.requestRecordPermission() { granted in
+                if granted {
+                    print("Microphone access allowed!")
+                } else {
+                    print("Microphone access denied.")
+                }
+            }
+            return
+            
+        case .denied:
+            throw InputError.permissionDenied
+            
+        case .granted:
+            return
+            
+        @unknown default:
+            throw InputError.unknownPermission
+        }
     }
     
     private func configureEngine() {
         engine.attach(metronomePlayer)
         
+        inputNode = engine.inputNode
+        if (inputNode != nil) {
+            printInputNodeInfo()
+            
+            inputRecordBuffer = createZeroedBuffer(format: inputFormat, capacity: AVAudioFrameCount(TimelineLength)) ?? AVAudioPCMBuffer()
+            
+            inputNode!.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] (buffer, time) in
+                guard let self = self else { return }
+                if (!self.isRecording) { return }
+                let master = self.inputRecordBuffer
+                if (self.RecordTime < 0) {
+                    self.RecordTime += self.TimelineLength
+                } else if (self.RecordTime > self.TimelineLength) {
+                    self.RecordTime -= self.TimelineLength
+                }
+                copyBuffer(from: buffer, to: master, atOffset: self.RecordTime, loop: true)
+                self.RecordTime += AVAudioFramePosition(buffer.frameLength)
+            }
+        }
+        
         let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
+        
+        if (hardwareFormat.sampleRate != inputFormat.sampleRate) {
+            print("Error: Hardware sample rate does not match input sample rate.")
+        }
 
         engine.connect(
             metronomePlayer,
@@ -251,7 +331,7 @@ class AudioEngineModel {
     }
     
     func ScheduleTracks(prepare_next_loop : Bool = false){
-        Tracks.forEach { $0.schedule(prepare_next_loop: prepare_next_loop) }
+        Tracks.filter { $0 !== currentlyRecordingTrack }.forEach { $0.schedule(prepare_next_loop: prepare_next_loop) }
     }
     
     func setupAnimation() {
@@ -287,6 +367,7 @@ class AudioEngineModel {
     func releaseResources() {
         metronomePlayer.stop()
         StopTracks()
+        inputNode?.removeTap(onBus: 0)
         engine.stop()
     }
     
@@ -356,11 +437,25 @@ class AudioEngineModel {
     func start_recording(){
         guard !isRecording else { return }
         isRecording = true
+        currentlyRecordingTrack = currentlySelectedTrack
+        if (isPlaying) {
+            update_current_time()
+        }
+        RecordStartTime = currTime
         start()
+        RecordTime = currTime
     }
     
     func stop_recording(){
         isRecording = false
+        update_current_time()
+        RecordStopTime = currTime
+        
+        currentlyRecordingTrack?.replace_recording_buffer(
+            with: inputRecordBuffer,
+            RecordStartTime: RecordStartTime,
+            RecordStopTime: RecordStopTime)
+        currentlyRecordingTrack = nil
     }
     
     func reset_to_begining(){
@@ -378,6 +473,7 @@ class AudioEngineModel {
             }
         }
         if (isPlaying) {
+            stop_recording()
             StopTracks()
             PlayTracks()
             ScheduleTracks()
@@ -407,6 +503,8 @@ class AudioEngineModel {
     private func recalculate_timeline_length() {
         TimelineLengthSeconds = Double(numBars * TimeSignatureHigh * 60)/Double(bpm)
         TimelineLength = AVAudioFramePosition(TimelineLengthSeconds * EngineSampleRate)
+        
+        inputRecordBuffer = createZeroedBuffer(format: inputFormat, capacity: AVAudioFrameCount(TimelineLength)) ?? AVAudioPCMBuffer()
     }
     
     private func recalculate_samples_per_beat() {
@@ -475,4 +573,125 @@ class AudioEngineModel {
             }
         }
     }
+    
+    func select_track(id: UUID?){
+        currentlySelectedTrack = Tracks.first(where: {$0.id == id})
+    }
+    
+    private func printInputNodeInfo() {
+        guard let inputNode else { return }
+        inputFormat = inputNode.inputFormat(forBus: 0)
+        
+        // Print input device name and format info
+        if let audioUnit = inputNode.audioUnit {
+            var deviceID = AudioDeviceID(0)
+            var propSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+            let status = AudioUnitGetProperty(audioUnit,
+                                              kAudioOutputUnitProperty_CurrentDevice,
+                                              kAudioUnitScope_Global,
+                                              0,
+                                              &deviceID,
+                                              &propSize)
+            if status == noErr, deviceID != 0 {
+                var deviceName: CFString? = nil
+                var nameSize = UInt32(MemoryLayout<CFString?>.size)
+                var address = AudioObjectPropertyAddress(
+                    mSelector: kAudioObjectPropertyName,
+                    mScope: kAudioObjectPropertyScopeGlobal,
+                    mElement: kAudioObjectPropertyElementMain)
+                let nameStatus = AudioObjectGetPropertyData(
+                    deviceID,
+                    &address,
+                    0,
+                    nil,
+                    &nameSize,
+                    &deviceName
+                )
+                if nameStatus == noErr, let name = deviceName {
+                    print("Input Audio Device Name: \(name as String)")
+                }
+            }
+        }
+        print("Input Format: \(inputFormat)")
+        print("Number of Channels: \(inputFormat.channelCount)")
+    }
 }
+
+extension AVAudioInputNode {
+    var isEnabled: Bool {
+        let inputFormat = self.inputFormat(forBus: 0)
+        if inputFormat.sampleRate.isZero || inputFormat.sampleRate.isNaN {
+            return false
+        }
+        if inputFormat.channelCount == 0 {
+            return false
+        }
+        return true
+    }
+}
+
+// Helper function to safely copy PCM data between buffers
+fileprivate func copyBuffer(from source: AVAudioPCMBuffer,
+                            to destination: AVAudioPCMBuffer,
+                            atOffset offset: AVAudioFramePosition,
+                            loop : Bool = false) {
+    guard let srcData = source.floatChannelData, let destData = destination.floatChannelData else { return }
+    
+    let channelCount = Int(source.format.channelCount)
+    let bytesPerSample : Int = formatNumBytes(source.format)
+    
+    for channel in 0..<channelCount {
+        let srcChannelPointer = srcData[channel]
+        let destChannelPointer = destData[channel].advanced(by: Int(offset))
+    
+        let framesTillEnd = Int(destination.frameLength) - Int(offset)
+        
+        var framesToCopy = min(Int(source.frameLength), framesTillEnd)
+        memcpy(destChannelPointer, srcChannelPointer, framesToCopy * bytesPerSample)
+        framesToCopy -= Int(source.frameLength)
+        if loop, framesToCopy < 0 {
+            framesToCopy = -framesToCopy
+            
+            let srcChannelPointer = srcData[channel].advanced(by: framesTillEnd)
+            let destChannelPointer = destData[channel]
+            memcpy(destChannelPointer, srcChannelPointer, framesToCopy * bytesPerSample)
+        }
+    }
+}
+
+fileprivate func createZeroedBuffer(format: AVAudioFormat, capacity: AVAudioFrameCount) -> AVAudioPCMBuffer? {
+    guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else {
+        return nil
+    }
+    
+    buffer.frameLength = capacity
+    
+    let channelCount = Int(format.channelCount)
+    var bytesToClear = Int(capacity) * formatNumBytes(format)
+    
+    if let channelData = buffer.floatChannelData {
+        for channel in 0..<channelCount {
+            memset(channelData[channel], 0, bytesToClear)
+        }
+    }
+    
+    return buffer
+}
+
+fileprivate func formatNumBytes(_ format: AVAudioFormat) -> Int {
+    switch format.commonFormat {
+    case .pcmFormatFloat32:
+        return MemoryLayout<Float>.size
+    case .pcmFormatInt16:
+        return MemoryLayout<Int16>.size
+    case .pcmFormatInt32:
+        return MemoryLayout<Int32>.size
+    case .pcmFormatFloat64:
+        return MemoryLayout<Double>.size
+    case .otherFormat:
+        return 4
+    @unknown default:
+        return  4
+    }
+}
+

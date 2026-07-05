@@ -286,6 +286,9 @@ struct TracksView: View {
                 .frame(width: 205)
         }
         .background(Color(white: 0.15))
+        .onChange(of: selectedID) { oldValue, newValue in
+            model.select_track(id: newValue)
+        }
     }
 }
 
@@ -375,6 +378,7 @@ struct RegionView: View {
     var body: some View {
         let audio_length = track.AudioLengthSeconds * oneSecondLength
         let length: CGFloat = min(audio_length, maxLength)
+        let startOffset: CGFloat = track.AudioStartSeconds * oneSecondLength
         
         ZStack() {
             RoundedRectangle(cornerRadius: 5)
@@ -383,10 +387,12 @@ struct RegionView: View {
                 .shadow(radius: 3)
             
             AudioWaveformView(
-                audio: track.BTAudioFile,
+                audio_file: track.BTAudioFile,
+                audio_buffer: track.RecordBuffer,
                 visibleRatio: (audio_length == 0.0) ? 0.0 : length / (audio_length)
             ).frame(width: length, height: 40)
         }
+        .offset(x: startOffset)
     }
 }
 
