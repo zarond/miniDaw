@@ -337,7 +337,7 @@ class AudioEngineModel {
     func setupAnimation() {
         if let mainScreen = NSScreen.main {
             displayLink = mainScreen.displayLink(target: self, selector: #selector(updateAnimation))
-            displayLink.add(to: .current, forMode: .common)
+            displayLink.add(to: .main, forMode: .common)
         }
     }
     
@@ -671,7 +671,7 @@ fileprivate func createZeroedBuffer(format: AVAudioFormat, capacity: AVAudioFram
     buffer.frameLength = capacity
     
     let channelCount = Int(format.channelCount)
-    var bytesToClear = Int(capacity) * formatNumBytes(format)
+    let bytesToClear = Int(capacity) * formatNumBytes(format)
     
     if let channelData = buffer.floatChannelData {
         for channel in 0..<channelCount {
