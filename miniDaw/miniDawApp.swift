@@ -117,6 +117,7 @@ class AudioEngineModel {
         recalculate_samples_per_beat()
         reset_to_begining()
         setupAnimation()
+        metronomePlayer.play()
     }
     
     deinit {
@@ -357,15 +358,10 @@ class AudioEngineModel {
                 stop_recording(at_loop_end: true)
             }
             if (metronomeOn || (preCount && isRecording && preCountBeats <= TimeSignatureHigh)) {
-                if !metronomePlayer.isPlaying {
-                    metronomePlayer.play()
-                }
                 let click_scheduled = scheduleMetronomeTick()
                 if (click_scheduled) {
                     preCountBeats += 1
                 }
-            } else if metronomePlayer.isPlaying {
-                metronomePlayer.stop()
             }
             update_current_time_seconds()
             if (looping) {
@@ -401,15 +397,10 @@ class AudioEngineModel {
         
         update_current_time_seconds()
         
-        if (metronomeOn || (preCount && start_recording)) {
-            if !metronomePlayer.isPlaying {
-                metronomePlayer.play()
-            }
-            if (isOnBeat()) {
-                let click_scheduled = scheduleMetronomeTick(play_now: true)
-                if (click_scheduled) {
-                    preCountBeats += 1
-                }
+        if (isOnBeat() && (metronomeOn || (preCount && start_recording))) {
+            let click_scheduled = scheduleMetronomeTick(play_now: true)
+            if (click_scheduled) {
+                preCountBeats += 1
             }
         }
         
@@ -419,6 +410,7 @@ class AudioEngineModel {
     
     func stop() {
         metronomePlayer.stop()
+        metronomePlayer.play()
         StopTracks()
         nextBeatNumber = 0
         nextLoopPlanned = false
