@@ -40,13 +40,13 @@ struct WorkWindowView: View {
                 RewindButton(onPress: bindableModel.reset_to_begining)
                 PlayButton(
                     isPlaying: $bindableModel.isPlaying,
-                    onStart: bindableModel.start,
+                    onStart: {bindableModel.start()},
                     onStop: bindableModel.stop
                 )
                 RecordButton(
                     isRecording: $bindableModel.isRecording,
                     onStart: bindableModel.start_recording,
-                    onStop: bindableModel.stop_recording
+                    onStop: {bindableModel.stop_recording()}
                 )
 
                 Spacer()
@@ -389,6 +389,7 @@ struct RegionView: View {
             AudioWaveformView(
                 audio_file: track.BTAudioFile,
                 audio_buffer: track.RecordBuffer,
+                audio_buffer_counter: track.RecordBufferCounter,
                 visibleRatio: (audio_length == 0.0) ? 0.0 : length / (audio_length)
             ).frame(width: length, height: 40)
         }

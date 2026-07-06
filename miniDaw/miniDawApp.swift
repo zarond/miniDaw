@@ -298,7 +298,9 @@ class AudioEngineModel {
         nextBeatNumber = calcNextBeatNumber
         
         nextBeatTime = AVAudioFramePosition(Double(nextBeatNumber) * samplesPerBeat)
+#if DEBUG
         print("time until beat: ", nextBeatNumber," - ", Double(nextBeatTime - currTime) / EngineSampleRate)
+#endif
         
         var when: AVAudioTime? = nil
         if !play_now {
@@ -306,9 +308,12 @@ class AudioEngineModel {
             when = metronomePlayer.playerTime(forNodeTime: engineWhen)
         }
         
-        let strongBeat = nextBeatNumber.isMultiple(of: TimeSignatureHigh)
+#if DEBUG
         print("tick 1")
+#endif
+        let strongBeat = nextBeatNumber.isMultiple(of: TimeSignatureHigh)
         let audio_buffer = strongBeat ? metronomeHighAudioBuffer : metronomeAudioBuffer
+#if DEBUG
         metronomePlayer.scheduleBuffer(audio_buffer, at: when, completionCallbackType : .dataPlayedBack)
         { callbacktype in
             print("tick 2")
@@ -320,6 +325,9 @@ class AudioEngineModel {
             }
             self.debugPrevMoment = debug_now
         }
+#else
+        metronomePlayer.scheduleBuffer(audio_buffer, at: when)
+#endif
         return true
     }
     
@@ -348,7 +356,7 @@ class AudioEngineModel {
             if isRecording && looping && outside {
                 stop_recording(at_loop_end: true)
             }
-            if (metronomeOn || (preCount && preCountBeats <= TimeSignatureHigh)) {
+            if (metronomeOn || (preCount && isRecording && preCountBeats <= TimeSignatureHigh)) {
                 if !metronomePlayer.isPlaying {
                     metronomePlayer.play()
                 }
@@ -375,7 +383,7 @@ class AudioEngineModel {
         engine.stop()
     }
     
-    func start() {
+    func start(start_recording : Bool = false) {
         guard !isPlaying else { return }
         isPlaying = true
         
@@ -385,7 +393,7 @@ class AudioEngineModel {
             reset_to_begining()
         } else {
             guard let now = engine.outputNode.lastRenderTime else { return }
-            if (isRecording && preCount) {
+            if (start_recording && preCount) {
                 currTime -= AVAudioFramePosition(samplesPerBeat * Double(TimeSignatureHigh))
             }
             startTime = now.sampleTime - currTime
@@ -393,7 +401,7 @@ class AudioEngineModel {
         
         update_current_time_seconds()
         
-        if (metronomeOn || preCount) {
+        if (metronomeOn || (preCount && start_recording)) {
             if !metronomePlayer.isPlaying {
                 metronomePlayer.play()
             }
@@ -440,22 +448,21 @@ class AudioEngineModel {
     
     func start_recording(){
         guard !isRecording else { return }
-        isRecording = true
         currentlyRecordingTrack = currentlySelectedTrack
         if (isPlaying) {
             _ = update_current_time()
         }
-        RecordStartTime = currTime
-        start()
+        let already_playing = isPlaying
+        if (!already_playing) {
+            start(start_recording: true)
+        }
+        RecordStartTime = currTime + (!already_playing && preCount ? AVAudioFramePosition(samplesPerBeat * Double(TimeSignatureHigh)) : 0)
         RecordTime = currTime
-    }
-    
-    func stop_recording(){
-        stop_recording(at_loop_end: false)
+        isRecording = true
     }
     
     func stop_recording(at_loop_end: Bool = false){
-        isRecording = false
+        guard isRecording else { return }
         _ = update_current_time()
         RecordStopTime = at_loop_end ? TimelineLength : currTime
         
@@ -464,6 +471,7 @@ class AudioEngineModel {
             RecordStartTime: RecordStartTime,
             RecordStopTime: RecordStopTime)
         currentlyRecordingTrack = nil
+        isRecording = false
     }
     
     func reset_to_begining(){

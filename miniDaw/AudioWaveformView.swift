@@ -13,6 +13,7 @@ import Accelerate
 struct AudioWaveformView: View {
     let audio_file : AVAudioFile?
     let audio_buffer : AVAudioPCMBuffer?
+    let audio_buffer_counter: Int
     let visibleRatio: Double
     
     @State private var data: [AudioPeak] = []
@@ -30,7 +31,7 @@ struct AudioWaveformView: View {
             if audio_file == nil { return }
             self.data = convertAudioToArray(audio_file)
         }
-        .task(id: audio_buffer) {
+        .task(id: audio_buffer_counter) {
             if audio_buffer == nil { return }
             self.data = convertAudioToArray(audio_buffer)
         }
@@ -100,5 +101,5 @@ fileprivate func convertAudioToArray(_ audioBuffer: AVAudioPCMBuffer?) -> [Audio
 #Preview("Sample Audio") {
     let url = Bundle.main.url(forResource: "metronome_bip", withExtension: "wav")
     let audioFile = try? url.flatMap { try AVAudioFile(forReading: $0) }
-    return AudioWaveformView(audio_file: audioFile, audio_buffer: nil, visibleRatio: 1.0)
+    return AudioWaveformView(audio_file: audioFile, audio_buffer: nil, audio_buffer_counter: 0, visibleRatio: 1.0)
 }

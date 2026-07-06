@@ -44,6 +44,7 @@ class Track: Identifiable {
     var AudioStartSeconds : Double = 0.0
     
     var RecordBuffer : AVAudioPCMBuffer?
+    var RecordBufferCounter = 0
     
     var RegionStartTime = AVAudioFramePosition(0)    // relative time on timeline
     var RegionStopTime = AVAudioFramePosition(0)     // relative time on timeline
@@ -172,7 +173,7 @@ class Track: Identifiable {
             RegionStartTime = newRegionStartTime
             RegionStopTime = newRegionStopTime
         }
-        
+        RecordBufferCounter += 1
         AudioLengthSeconds = Double(self.RegionStopTime - self.RegionStartTime) / TrackFormat.sampleRate
         AudioStartSeconds = Double(self.RegionStartTime) / TrackFormat.sampleRate
     }
