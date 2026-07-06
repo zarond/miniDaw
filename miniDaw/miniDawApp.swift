@@ -195,7 +195,8 @@ class AudioEngineModel {
                 } else if (self.RecordTime > self.TimelineLength) {
                     self.RecordTime -= self.TimelineLength
                 }
-                copyBuffer(from: buffer, to: master, atOffset: self.RecordTime, loop: true)
+                copyBuffer(from: buffer, to: master, atOffset: self.RecordTime, startFrameSrc: 0,
+                           frameNumberSrc: buffer.frameLength, loop: true)
                 self.RecordTime += AVAudioFramePosition(buffer.frameLength)
             }
         }
@@ -286,7 +287,7 @@ class AudioEngineModel {
     }
     
     func scheduleMetronomeTick(play_now: Bool = false) -> Bool {
-        update_current_time()
+        _ = update_current_time()
         
         let calcNextBeatNumber : Int = play_now ?
             Int(round(Double(currTime) / samplesPerBeat)) :
@@ -331,7 +332,7 @@ class AudioEngineModel {
     }
     
     func ScheduleTracks(prepare_next_loop : Bool = false){
-        Tracks.filter { $0 !== currentlyRecordingTrack }.forEach { $0.schedule(prepare_next_loop: prepare_next_loop) }
+        Tracks.filter { $0 !== currentlyRecordingTrack || $0.type == .backingTrack}.forEach { $0.schedule(prepare_next_loop: prepare_next_loop) }
     }
     
     func setupAnimation() {
@@ -343,7 +344,10 @@ class AudioEngineModel {
     
     @objc func updateAnimation(displaylink: CADisplayLink) { // updating needle position on timeline and scheduling upcoming events
         if (isPlaying) {
-            update_current_time()
+            let outside = update_current_time()
+            if isRecording && looping && outside {
+                stop_recording(at_loop_end: true)
+            }
             if (metronomeOn || (preCount && preCountBeats <= TimeSignatureHigh)) {
                 if !metronomePlayer.isPlaying {
                     metronomePlayer.play()
@@ -358,7 +362,7 @@ class AudioEngineModel {
             update_current_time_seconds()
             if (looping) {
                 setupNextLoop() // try to set up next loop if near the end of the timeline
-            } else if (currTime > TimelineLength) {
+            } else if (outside) {
                 stop()
             }
         }
@@ -411,7 +415,7 @@ class AudioEngineModel {
         nextBeatNumber = 0
         nextLoopPlanned = false
         
-        update_current_time()
+        _ = update_current_time()
         update_current_time_seconds()
         
         isPlaying = false
@@ -439,7 +443,7 @@ class AudioEngineModel {
         isRecording = true
         currentlyRecordingTrack = currentlySelectedTrack
         if (isPlaying) {
-            update_current_time()
+            _ = update_current_time()
         }
         RecordStartTime = currTime
         start()
@@ -447,9 +451,13 @@ class AudioEngineModel {
     }
     
     func stop_recording(){
+        stop_recording(at_loop_end: false)
+    }
+    
+    func stop_recording(at_loop_end: Bool = false){
         isRecording = false
-        update_current_time()
-        RecordStopTime = currTime
+        _ = update_current_time()
+        RecordStopTime = at_loop_end ? TimelineLength : currTime
         
         currentlyRecordingTrack?.replace_recording_buffer(
             with: inputRecordBuffer,
@@ -474,7 +482,7 @@ class AudioEngineModel {
             metronomePlayer.stop()
             metronomePlayer.play()
             if (isPlaying && isOnBeat()) {
-                scheduleMetronomeTick(play_now: true)
+                _ = scheduleMetronomeTick(play_now: true)
             }
         }
         if (isPlaying) {
@@ -515,13 +523,15 @@ class AudioEngineModel {
         samplesPerBeat = EngineSampleRate * 60.0 / Double(bpm)
     }
     
-    func update_current_time() {
-        guard let now = engine.outputNode.lastRenderTime else { return }
+    func update_current_time() -> Bool {
+        guard let now = engine.outputNode.lastRenderTime else { return false }
         currTime = now.sampleTime - startTime
-        if (looping && currTime > TimelineLength) {
+        let outside_limit = (currTime > TimelineLength)
+        if (looping && outside_limit) {
             currTime -= TimelineLength
             startTime += TimelineLength
         }
+        return outside_limit
     }
     
     func update_current_time_seconds() { // for visual feedback
@@ -597,22 +607,26 @@ class AudioEngineModel {
                                               &deviceID,
                                               &propSize)
             if status == noErr, deviceID != 0 {
-                var deviceName: CFString? = nil
+                var deviceName = CFStringCreateMutable(nil, 0)
                 var nameSize = UInt32(MemoryLayout<CFString?>.size)
                 var address = AudioObjectPropertyAddress(
                     mSelector: kAudioObjectPropertyName,
                     mScope: kAudioObjectPropertyScopeGlobal,
                     mElement: kAudioObjectPropertyElementMain)
-                let nameStatus = AudioObjectGetPropertyData(
-                    deviceID,
-                    &address,
-                    0,
-                    nil,
-                    &nameSize,
-                    &deviceName
-                )
-                if nameStatus == noErr, let name = deviceName {
-                    print("Input Audio Device Name: \(name as String)")
+                let nameStatus = withUnsafeMutablePointer(to: &deviceName) { ptr in
+                    ptr.withMemoryRebound(to: UInt8.self, capacity: Int(nameSize)) { rawPtr in
+                        AudioObjectGetPropertyData(
+                            deviceID,
+                            &address,
+                            0,
+                            nil,
+                            &nameSize,
+                            rawPtr
+                        )
+                    }
+                }
+                if nameStatus == noErr && deviceName != nil {
+                    print("Input Audio Device Name: \(deviceName!)")
                 }
             }
         }
@@ -631,71 +645,6 @@ extension AVAudioInputNode {
             return false
         }
         return true
-    }
-}
-
-// Helper function to safely copy PCM data between buffers
-fileprivate func copyBuffer(from source: AVAudioPCMBuffer,
-                            to destination: AVAudioPCMBuffer,
-                            atOffset offset: AVAudioFramePosition,
-                            loop : Bool = false) {
-    guard let srcData = source.floatChannelData, let destData = destination.floatChannelData else { return }
-    
-    let channelCount = Int(source.format.channelCount)
-    let bytesPerSample : Int = formatNumBytes(source.format)
-    
-    for channel in 0..<channelCount {
-        let srcChannelPointer = srcData[channel]
-        let destChannelPointer = destData[channel].advanced(by: Int(offset))
-    
-        let framesTillEnd = Int(destination.frameLength) - Int(offset)
-        
-        var framesToCopy = min(Int(source.frameLength), framesTillEnd)
-        memcpy(destChannelPointer, srcChannelPointer, framesToCopy * bytesPerSample)
-        framesToCopy -= Int(source.frameLength)
-        if loop, framesToCopy < 0 {
-            framesToCopy = -framesToCopy
-            
-            let srcChannelPointer = srcData[channel].advanced(by: framesTillEnd)
-            let destChannelPointer = destData[channel]
-            memcpy(destChannelPointer, srcChannelPointer, framesToCopy * bytesPerSample)
-        }
-    }
-}
-
-fileprivate func createZeroedBuffer(format: AVAudioFormat, capacity: AVAudioFrameCount) -> AVAudioPCMBuffer? {
-    guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else {
-        return nil
-    }
-    
-    buffer.frameLength = capacity
-    
-    let channelCount = Int(format.channelCount)
-    let bytesToClear = Int(capacity) * formatNumBytes(format)
-    
-    if let channelData = buffer.floatChannelData {
-        for channel in 0..<channelCount {
-            memset(channelData[channel], 0, bytesToClear)
-        }
-    }
-    
-    return buffer
-}
-
-fileprivate func formatNumBytes(_ format: AVAudioFormat) -> Int {
-    switch format.commonFormat {
-    case .pcmFormatFloat32:
-        return MemoryLayout<Float>.size
-    case .pcmFormatInt16:
-        return MemoryLayout<Int16>.size
-    case .pcmFormatInt32:
-        return MemoryLayout<Int32>.size
-    case .pcmFormatFloat64:
-        return MemoryLayout<Double>.size
-    case .otherFormat:
-        return 4
-    @unknown default:
-        return  4
     }
 }
 

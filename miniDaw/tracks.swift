@@ -39,7 +39,7 @@ class Track: Identifiable {
     
     var BTAudioFile : AVAudioFile?
     var BTAudioLengthSamples = AVAudioFramePosition()
-    var TrackSampleRate : Double = 44100
+    var TrackFormat = AVAudioFormat()
     var AudioLengthSeconds : Double = 4.0
     var AudioStartSeconds : Double = 0.0
     
@@ -55,9 +55,9 @@ class Track: Identifiable {
         if let audioFile = audioFile {
             BTAudioFile = audioFile
             BTAudioLengthSamples = audioFile.length
-            TrackSampleRate = audioFile.fileFormat.sampleRate
+            TrackFormat = audioFile.fileFormat
             RegionStartTime = 0                               // audio files are put at the beginning
-            AudioLengthSeconds = Double(BTAudioLengthSamples) / TrackSampleRate
+            AudioLengthSeconds = Double(BTAudioLengthSamples) / TrackFormat.sampleRate
             RegionStopTime = AVAudioFramePosition(AudioLengthSeconds * (Track.model?.EngineSampleRate ?? 0))
         }
         
@@ -68,7 +68,7 @@ class Track: Identifiable {
         
         if (type == .recordingTrack) {
             AudioLengthSeconds = 0.0
-            TrackSampleRate = hardwareInputFormat.sampleRate
+            TrackFormat = hardwareInputFormat
         }
         
         engine.attach(Player)
@@ -103,14 +103,14 @@ class Track: Identifiable {
             let sampleTime = model.startTime + RegionStartTime + (prepare_next_loop ? model.TimelineLength : 0)
             let engineWhen = AVAudioTime(sampleTime: sampleTime, atRate: model.EngineSampleRate)
             let when = Player.playerTime(forNodeTime: engineWhen)
-            let number_frames = AVAudioFrameCount(AVAudioFramePosition(model.TimelineLengthSeconds * TrackSampleRate))
+            let number_frames = AVAudioFrameCount(AVAudioFramePosition(model.TimelineLengthSeconds * TrackFormat.sampleRate))
             Player.scheduleSegment(file, startingFrame: 0, frameCount: number_frames, at: when)
         } else if (model.currTime < RegionStopTime){
             let start_frame_engine = model.currTime - RegionStartTime
             let start_frame_seconds = Double(start_frame_engine) / model.EngineSampleRate
-            let start_frame = AVAudioFramePosition(start_frame_seconds * TrackSampleRate)
+            let start_frame = AVAudioFramePosition(start_frame_seconds * TrackFormat.sampleRate)
             let number_frames = AVAudioFrameCount(
-                max(AVAudioFramePosition(model.TimelineLengthSeconds * TrackSampleRate) - start_frame, 0)
+                max(AVAudioFramePosition(model.TimelineLengthSeconds * TrackFormat.sampleRate) - start_frame, 0)
             )
             Player.scheduleSegment(file, startingFrame: start_frame, frameCount: number_frames, at: nil)
         }
@@ -123,12 +123,12 @@ class Track: Identifiable {
             let engineWhen = AVAudioTime(sampleTime: sampleTime, atRate: model.EngineSampleRate)
             let when = Player.playerTime(forNodeTime: engineWhen)
             let number_frames = AVAudioFrameCount(max(min(RegionStopTime, model.TimelineLength) - RegionStartTime, 0))
-            let segmentBuffer = cropped_buffer(from: RecordBuffer, start_frame: 0, number_frames: number_frames)
+            let segmentBuffer = cropped_buffer(from: RecordBuffer, start_frame: 0, number_frames: number_frames) ?? AVAudioPCMBuffer()
             Player.scheduleBuffer(segmentBuffer, at: when)
         } else if (model.currTime < RegionStopTime) {
             let start_frame = model.currTime - RegionStartTime
             let number_frames = AVAudioFrameCount(max(min(RegionStopTime, model.TimelineLength) - RegionStartTime - start_frame, 0))
-            let segmentBuffer = cropped_buffer(from: RecordBuffer, start_frame: start_frame, number_frames: number_frames)
+            let segmentBuffer = cropped_buffer(from: RecordBuffer, start_frame: start_frame, number_frames: number_frames) ?? AVAudioPCMBuffer()
             Player.scheduleBuffer(segmentBuffer)
         }
     }
@@ -140,43 +140,40 @@ class Track: Identifiable {
     ) {
         if (type == .backingTrack) { return }
         if (RecordStartTime >= RecordStopTime) { return }
-
-        // todo: need to join buffers instead of just replacing
-        let start_frame = RecordStartTime
-        let number_frames = AVAudioFrameCount(max(RecordStopTime - start_frame, 0))
-        RecordBuffer = cropped_buffer(from: buffer, start_frame: start_frame, number_frames: number_frames, allow_skip_crop: false)
         
-        self.RegionStartTime = RecordStartTime
-        self.RegionStopTime = RecordStopTime
+        if (RecordBuffer == nil) {
+            let number_frames = AVAudioFrameCount(max(RecordStopTime - RecordStartTime, 0))
+            RecordBuffer = cropped_buffer(from: buffer, start_frame: RecordStartTime, number_frames: number_frames, allow_skip_crop: false)
+            
+            RegionStartTime = RecordStartTime
+            RegionStopTime = RecordStopTime
+        } else {
+            let newRegionStartTime = min(RecordStartTime, RegionStartTime)
+            let newRegionStopTime = max(RecordStopTime, RegionStopTime)
+            
+            if (RegionStartTime <= RecordStartTime && RecordStopTime <= RegionStopTime) {
+                let number_frames = RecordStopTime - RecordStartTime
+                let offset = RecordStartTime - RegionStartTime
+                copyBuffer(from: buffer, to: RecordBuffer!, atOffset: offset, startFrameSrc: RecordStartTime,
+                           frameNumberSrc: AVAudioFrameCount(number_frames))
+            } else {
+                let number_frames_total = newRegionStopTime - newRegionStartTime
+                let newRecordBuffer = createZeroedBuffer(format: TrackFormat, capacity: AVAudioFrameCount(number_frames_total)) ?? AVAudioPCMBuffer()
+                let number_frames_A = RegionStopTime - RegionStartTime
+                let number_frames_B = RecordStopTime - RecordStartTime
+                let offset_A = RegionStartTime - newRegionStartTime
+                let offset_B = RecordStartTime - newRegionStartTime
+                copyBuffer(from: RecordBuffer!, to: newRecordBuffer, atOffset : offset_A, startFrameSrc: 0,
+                           frameNumberSrc: AVAudioFrameCount(number_frames_A))
+                copyBuffer(from: buffer, to: newRecordBuffer, atOffset : offset_B, startFrameSrc: RecordStartTime,
+                           frameNumberSrc: AVAudioFrameCount(number_frames_B))
+                RecordBuffer = newRecordBuffer
+            }
+            RegionStartTime = newRegionStartTime
+            RegionStopTime = newRegionStopTime
+        }
         
-        AudioLengthSeconds = Double(self.RegionStopTime - self.RegionStartTime) / TrackSampleRate
-        AudioStartSeconds = Double(self.RegionStartTime) / TrackSampleRate
-    }
-    
-    private func cropped_buffer(from buffer: AVAudioPCMBuffer, start_frame: AVAudioFramePosition, number_frames: AVAudioFrameCount, allow_skip_crop: Bool = true) -> AVAudioPCMBuffer {
-        guard let segmentBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: number_frames) else {
-            return AVAudioPCMBuffer()
-        }
-        if (allow_skip_crop && start_frame == 0 && number_frames >= buffer.frameLength) {
-            return buffer
-        }
-        segmentBuffer.frameLength = number_frames
-        let channelCount = Int(buffer.format.channelCount)
-        if let srcData = buffer.floatChannelData, let destData = segmentBuffer.floatChannelData {
-            for channel in 0..<channelCount {
-                let src = srcData[channel].advanced(by: Int(start_frame))
-                let dst = destData[channel]
-                let byteCount = Int(number_frames) * MemoryLayout<Float>.size
-                memcpy(dst, src, byteCount)
-            }
-        } else if let srcData = buffer.int16ChannelData, let destData = segmentBuffer.int16ChannelData {
-            for channel in 0..<channelCount {
-                let src = srcData[channel].advanced(by: Int(start_frame))
-                let dst = destData[channel]
-                let byteCount = Int(number_frames) * MemoryLayout<Int16>.size
-                memcpy(dst, src, byteCount)
-            }
-        }
-        return segmentBuffer
+        AudioLengthSeconds = Double(self.RegionStopTime - self.RegionStartTime) / TrackFormat.sampleRate
+        AudioStartSeconds = Double(self.RegionStartTime) / TrackFormat.sampleRate
     }
 }
