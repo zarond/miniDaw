@@ -592,6 +592,16 @@ class AudioEngineModel {
         currentlySelectedTrack = Tracks.first(where: {$0.id == id})
     }
     
+    func set_monitoring(for id: UUID, enabled: Bool) {
+        guard let SelectedTrack = Tracks.first(where: {$0.id == id}) else { return }
+        Tracks.filter { $0 !== SelectedTrack && $0.monitorOn }.forEach { $0.disableMonitoring() }
+        if enabled {
+            SelectedTrack.enableMonitoring()
+        } else {
+            SelectedTrack.disableMonitoring()
+        }
+    }
+    
     private func printInputNodeInfo() {
         guard let inputNode else { return }
         inputFormat = inputNode.inputFormat(forBus: 0)

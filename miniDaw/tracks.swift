@@ -30,7 +30,7 @@ class Track: Identifiable {
             Player.volume = mute ? 0.0 : volume
         }
     }
-    var monitorOn: Bool = false
+    private(set) var monitorOn: Bool = false
     
     static weak var engine : AVAudioEngine?
     static weak var model : AudioEngineModel?
@@ -77,6 +77,10 @@ class Track: Identifiable {
             Player,
             to: engine.mainMixerNode,
             format: type == .backingTrack ? hardwareFormat : hardwareInputFormat)
+    }
+    
+    deinit {
+        releaseResources()
     }
     
     func play() {
@@ -176,5 +180,36 @@ class Track: Identifiable {
         RecordBufferCounter += 1
         AudioLengthSeconds = Double(self.RegionStopTime - self.RegionStartTime) / TrackFormat.sampleRate
         AudioStartSeconds = Double(self.RegionStartTime) / TrackFormat.sampleRate
+    }
+    
+    func enableMonitoring(){
+        guard type == .recordingTrack else { return }
+        guard !monitorOn else { return }
+        guard let engine = Track.engine else { return }
+
+        // Connect input to main mixer
+        let inputFormat = engine.inputNode.inputFormat(forBus: 0)
+        engine.connect(engine.inputNode, to: engine.mainMixerNode, format: inputFormat)
+        // todo: connect to this tracks chain of effects, not globally
+
+        monitorOn = true
+    }
+    
+    func disableMonitoring(){
+        guard type == .recordingTrack else { return }
+        guard monitorOn else { return }
+        guard let engine = Track.engine else { return }
+
+        engine.disconnectNodeOutput(engine.inputNode)
+
+        monitorOn = false
+    }
+    
+    private func releaseResources(){
+        disableMonitoring()
+        Player.stop()
+        Track.engine?.disconnectNodeOutput(Player)
+        Track.engine?.detach(Player)
+        Player.reset()
     }
 }

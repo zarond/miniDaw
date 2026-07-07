@@ -319,7 +319,13 @@ struct TrackView: View {
                 .toggleStyle(.button)
                 
                 if (track.type == .recordingTrack) {
-                    Toggle(isOn: $bindableTrack.monitorOn) {
+                    let monitorBinding = Binding<Bool>(
+                        get: { bindableTrack.monitorOn },
+                        set: { newValue in
+                            Track.model?.set_monitoring(for: track.id, enabled: newValue)
+                        }
+                    )
+                    Toggle(isOn: monitorBinding) {
                         Image(systemName: "microphone")
                         .font(.system(size: 10, weight: .medium))
                     }
@@ -447,3 +453,4 @@ struct BottomButtons: View {
     ]
     return WorkWindowView().environment(model)
 }
+
