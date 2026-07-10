@@ -21,7 +21,7 @@ struct ContentView: View {
 struct MainOptionsView: View {
     @Environment(AudioEngineModel.self) private var model
     @State private var selectedBufferSize: UInt32 = 512
-    private let availableBufferSizes: [UInt32] = [64, 128, 256, 512, 1024]
+    private let availableBufferSizes: [UInt32] = [64, 128, 256, 512]
     
     var body: some View {
         // Create a bindable reference locally to allow the use of '$'

@@ -274,7 +274,7 @@ class AudioEngineModel {
         }
     }
     
-    // TODO: Find bug thats breaking time calculations!
+    // TODO: Find bug thats breaking time calculations after proper restart!
     @discardableResult
     func changeBufferFrameSize(to newSize: UInt32) -> Bool {
         if isPlaying {
@@ -284,11 +284,12 @@ class AudioEngineModel {
         metronomePlayer.stop()
         
         inputNode?.removeTap(onBus: 0)
-        engine.stop()
+        //engine.stop() // TODO: properly stop engine
         
         configureLowLatencyBuffer(bufferSize: newSize)
         installInputTap(bufferSize: newSize)
         
+        /* TODO: properly restart engine
         engine.reset()
         engine.prepare()
         do {
@@ -296,7 +297,7 @@ class AudioEngineModel {
         } catch {
             print("Failed to restart engine after buffer size change: \(error)")
             return false
-        }
+        }*/
         
         inputNode = engine.inputNode
         if let inputNode {
