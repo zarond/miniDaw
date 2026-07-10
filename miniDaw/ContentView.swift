@@ -20,6 +20,8 @@ struct ContentView: View {
 
 struct MainOptionsView: View {
     @Environment(AudioEngineModel.self) private var model
+    @State private var selectedBufferSize: UInt32 = 512
+    private let availableBufferSizes: [UInt32] = [64, 128, 256, 512, 1024]
     
     var body: some View {
         // Create a bindable reference locally to allow the use of '$'
@@ -71,6 +73,17 @@ struct MainOptionsView: View {
             )
             
             LoadBTButton(onPress: bindableModel.load_backing_track)
+            
+            Picker("IO Size:", selection: $selectedBufferSize) {
+                ForEach(availableBufferSizes, id: \.self) { size in
+                    Text(String(size)).tag(size)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 140)
+            .onChange(of: selectedBufferSize) { oldValue, newValue in
+                _ = model.changeBufferFrameSize(to: newValue)
+            }
             
             Text("Output Sound Volume:")
                 .padding(.top, 10)
@@ -255,4 +268,3 @@ struct VolumeSlider: View {
     ]
     return ContentView().environment(model)
 }
-

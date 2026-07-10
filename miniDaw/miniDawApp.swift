@@ -93,6 +93,7 @@ class AudioEngineModel {
     var isPlayerReady: Bool = false
     
     var EngineSampleRate : Double = 44100.0
+    private(set) var IOBufferSize : UInt32 = 512
     
     var metronomeAudioBuffer = AVAudioPCMBuffer()
     var metronomeHighAudioBuffer = AVAudioPCMBuffer()
@@ -182,24 +183,10 @@ class AudioEngineModel {
         engine.attach(metronomePlayer)
         
         inputNode = engine.inputNode
-        if (inputNode != nil) {
+        if let inputNode {
+            inputFormat = inputNode.inputFormat(forBus: 0)
             printInputNodeInfo()
-            
-            inputRecordBuffer = createZeroedBuffer(format: inputFormat, capacity: AVAudioFrameCount(TimelineLength)) ?? AVAudioPCMBuffer()
-            
-            inputNode!.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] (buffer, time) in
-                guard let self = self else { return }
-                if (!self.isRecording) { return }
-                let master = self.inputRecordBuffer
-                if (self.RecordTime < 0) {
-                    self.RecordTime += self.TimelineLength
-                } else if (self.RecordTime > self.TimelineLength) {
-                    self.RecordTime -= self.TimelineLength
-                }
-                copyBuffer(from: buffer, to: master, atOffset: self.RecordTime, startFrameSrc: 0,
-                           frameNumberSrc: buffer.frameLength, loop: true)
-                self.RecordTime += AVAudioFramePosition(buffer.frameLength)
-            }
+            installInputTap(bufferSize: IOBufferSize)
         }
         
         let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
@@ -217,7 +204,7 @@ class AudioEngineModel {
         
         EngineSampleRate = hardwareFormat.sampleRate
         
-        configureLowLatencyBuffer()
+        configureLowLatencyBuffer(bufferSize: IOBufferSize)
 
         do {
             try engine.start()
@@ -262,12 +249,12 @@ class AudioEngineModel {
         }
     }
     
-    private func configureLowLatencyBuffer() {
+    private func configureLowLatencyBuffer(bufferSize: UInt32 = 512) {
         // 1. Get the hardware ID of the current output device
         let outputNode = engine.outputNode
         
         // 2. Define the target buffer frame size (64 or 128 is ideal for real-time tracking)
-        var bufferFrameSize: UInt32 = 512
+        var bufferSize = bufferSize
         let propertySize = UInt32(MemoryLayout<UInt32>.size)
         
         // 3. Set the property on the output AudioUnit
@@ -276,14 +263,78 @@ class AudioEngineModel {
             kAudioDevicePropertyBufferFrameSize,
             kAudioUnitScope_Global,
             0, // Element 0 is the output
-            &bufferFrameSize,
+            &bufferSize,
             propertySize
         )
         
         if status == noErr {
-            print("Successfully set hardware buffer size to \(bufferFrameSize) frames.")
+            print("Successfully set hardware buffer size to \(bufferSize) frames.")
         } else {
             print("Failed to set buffer size. Core Audio Error code: \(status)")
+        }
+    }
+    
+    // TODO: Find bug thats breaking time calculations!
+    @discardableResult
+    func changeBufferFrameSize(to newSize: UInt32) -> Bool {
+        if isPlaying {
+            stop()
+        }
+        displayLink.invalidate()
+        metronomePlayer.stop()
+        
+        inputNode?.removeTap(onBus: 0)
+        engine.stop()
+        
+        configureLowLatencyBuffer(bufferSize: newSize)
+        installInputTap(bufferSize: newSize)
+        
+        engine.reset()
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            print("Failed to restart engine after buffer size change: \(error)")
+            return false
+        }
+        
+        inputNode = engine.inputNode
+        if let inputNode {
+            inputFormat = inputNode.inputFormat(forBus: 0)
+            printInputNodeInfo()
+        }
+        
+        let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
+        if (hardwareFormat.sampleRate != inputFormat.sampleRate) {
+            print("Error: Hardware sample rate does not match input sample rate.")
+        }
+        EngineSampleRate = hardwareFormat.sampleRate
+        
+        metronomePlayer.play()
+        setupAnimation()
+        
+        recalculate_timeline_length()
+        recalculate_samples_per_beat()
+        
+        IOBufferSize = newSize
+        return true
+    }
+
+    private func installInputTap(bufferSize: UInt32) {
+        inputRecordBuffer = createZeroedBuffer(format: inputFormat, capacity: AVAudioFrameCount(TimelineLength)) ?? AVAudioPCMBuffer()
+        
+        inputNode!.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] (buffer, time) in
+            guard let self = self else { return }
+            if (!self.isRecording) { return }
+            let master = self.inputRecordBuffer
+            if (self.RecordTime < 0) {
+                self.RecordTime += self.TimelineLength
+            } else if (self.RecordTime > self.TimelineLength) {
+                self.RecordTime -= self.TimelineLength
+            }
+            copyBuffer(from: buffer, to: master, atOffset: self.RecordTime, startFrameSrc: 0,
+                       frameNumberSrc: buffer.frameLength, loop: true)
+            self.RecordTime += AVAudioFramePosition(buffer.frameLength)
         }
     }
     
@@ -297,11 +348,7 @@ class AudioEngineModel {
         if (calcNextBeatNumber == nextBeatNumber && !play_now) { return false }
         
         nextBeatNumber = calcNextBeatNumber
-        
         nextBeatTime = AVAudioFramePosition(Double(nextBeatNumber) * samplesPerBeat)
-#if DEBUG
-        print("time until beat: ", nextBeatNumber," - ", Double(nextBeatTime - currTime) / EngineSampleRate)
-#endif
         
         var when: AVAudioTime? = nil
         if !play_now {
@@ -309,12 +356,24 @@ class AudioEngineModel {
             when = metronomePlayer.playerTime(forNodeTime: engineWhen)
         }
         
-#if DEBUG
-        print("tick 1")
-#endif
         let strongBeat = nextBeatNumber.isMultiple(of: TimeSignatureHigh)
         let audio_buffer = strongBeat ? metronomeHighAudioBuffer : metronomeAudioBuffer
 #if DEBUG
+        print("time until beat: ", nextBeatNumber," - ", Double(nextBeatTime - currTime) / EngineSampleRate)
+        if let when {
+            if let nodeRenderTime = metronomePlayer.lastRenderTime,
+               let playerNow = metronomePlayer.playerTime(forNodeTime: nodeRenderTime),
+               when.isSampleTimeValid, playerNow.isSampleTimeValid {
+                if when.sampleTime <= playerNow.sampleTime {
+                    print("mapped player time is in the past (\(when.sampleTime) <= \(playerNow.sampleTime));")
+                }
+                let engineWhen = AVAudioTime(sampleTime: startTime + nextBeatTime, atRate: EngineSampleRate)
+                if engineWhen.sampleTime <= nodeRenderTime.sampleTime {
+                    print("mapped node time is in the past (\(engineWhen.sampleTime) <= \(nodeRenderTime.sampleTime));")
+                }
+            }
+        }
+        print("tick 1")
         metronomePlayer.scheduleBuffer(audio_buffer, at: when, completionCallbackType : .dataPlayedBack)
         { callbacktype in
             print("tick 2")
@@ -377,6 +436,7 @@ class AudioEngineModel {
         StopTracks()
         inputNode?.removeTap(onBus: 0)
         engine.stop()
+        displayLink.invalidate()
     }
     
     func start(start_recording : Bool = false) {
@@ -604,7 +664,6 @@ class AudioEngineModel {
     
     private func printInputNodeInfo() {
         guard let inputNode else { return }
-        inputFormat = inputNode.inputFormat(forBus: 0)
         
         // Print input device name and format info
         if let audioUnit = inputNode.audioUnit {
