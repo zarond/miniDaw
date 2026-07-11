@@ -148,7 +148,7 @@ struct TimelineWindowView: View {
                 let totalBeats = barCount * beatsPerBar
                 let rulerHeight: CGFloat = 20
                 let rulerWidth = geo.size.width
-                let beatSpacing = max(rulerWidth / CGFloat(totalBeats), 8)
+                let beatSpacing = CGFloat(max(rulerWidth / Double(totalBeats), 8))
                 let timeline_width = beatSpacing * CGFloat(totalBeats)
                 let oneSecondLength = (Double(model.bpm) / 60.0) * beatSpacing
                 
@@ -262,7 +262,8 @@ struct Triangle: Shape {
 struct TracksView: View {
     var model: AudioEngineModel
     
-    @FocusState private var selectedID: UUID?
+    @FocusState private var focusedID: UUID?
+    @State private var selectedID: UUID?
     
     var body: some View {
         ZStack() {
@@ -277,7 +278,7 @@ struct TracksView: View {
                 ForEach(model.Tracks) { track in
                     TrackView(track: track, isFocused: selectedID == track.id)
                         .focusable()
-                        .focused($selectedID, equals: track.id)
+                        .focused($focusedID, equals: track.id)
                         .focusEffectDisabled()
                         .onDeleteCommand {
                             model.delete_track(id: selectedID)
@@ -287,6 +288,10 @@ struct TracksView: View {
                 Spacer()
                 
                 BottomButtons(model: model, selectedID: selectedID)
+            }
+            .onChange(of: focusedID) { oldValue, newValue in
+                if newValue == nil { return }
+                selectedID = newValue
             }
             .onChange(of: selectedID) { oldValue, newValue in
                 model.select_track(id: newValue)
@@ -395,9 +400,10 @@ struct RegionView: View {
     let maxLength: CGFloat
     
     var body: some View {
-        let audio_length = track.AudioLengthSeconds * oneSecondLength
+        let audio_length = max(track.AudioLengthSeconds * oneSecondLength, 1e-5)
         let length: CGFloat = min(audio_length, maxLength)
         let startOffset: CGFloat = track.AudioStartSeconds * oneSecondLength
+        let visibleRatio = (audio_length < maxLength) ? 1.0 : maxLength / audio_length
         
         ZStack() {
             RoundedRectangle(cornerRadius: 5)
@@ -409,7 +415,7 @@ struct RegionView: View {
                 audio_file: track.BTAudioFile,
                 audio_buffer: track.RecordBuffer,
                 audio_buffer_counter: track.RecordBufferCounter,
-                visibleRatio: (audio_length == 0.0) ? 0.0 : length / (audio_length)
+                visibleRatio: visibleRatio.isNaN ? 1.0 : visibleRatio
             ).frame(width: length, height: 40)
         }
         .offset(x: startOffset)
@@ -488,6 +494,7 @@ struct Knob: View {
                     .frame(width: 95, height: 95)
                 
                 // Active Value Fill Track
+                let colorBlue = Color(red: 0.0, green: 0.48, blue: 1.0)
                 let valueRange = maxValue - minValue
                 let relativeValue = (value - minValue) / valueRange
                 let relativeCenter = (centerValue - minValue) / valueRange
@@ -495,7 +502,7 @@ struct Knob: View {
                 let to = 0.78 * CGFloat(relativeValue)
                 Circle()
                     .trim(from: min(from, to), to: max(from, to))
-                    .stroke(Color.blue, style: StrokeStyle(lineWidth: 16, lineCap: .round))
+                    .stroke(colorBlue, style: StrokeStyle(lineWidth: 16, lineCap: .round))
                     .rotationEffect(.degrees(130))
                     .frame(width: 95, height: 95)
                     .animation(.linear(duration: 0.1), value: value)
@@ -508,7 +515,7 @@ struct Knob: View {
                     .overlay(
                         // Indicator dot/line
                         Circle()
-                            .fill(Color.blue)
+                            .fill(colorBlue)
                             .frame(width: 16, height: 16)
                             .offset(y: -30) // Push it to the outer rim
                     )

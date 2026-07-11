@@ -11,7 +11,7 @@ struct InspectorPanelView: View {
     @Environment(AudioEngineModel.self) private var model
     
     var body: some View {
-        let selectedTrack = model.currentlySelectedTrack
+        weak let selectedTrack = model.currentlySelectedTrack
         if let selectedTrack {
             TrackOptionsView(track: selectedTrack)
         } else {
@@ -24,14 +24,15 @@ struct TrackOptionsView: View {
     let track : Track
     var body: some View {
         @Bindable var bindableTrack = track
-        VStack() {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Track name:")
+            
             EditableNameTextField(name: $bindableTrack.name)
             
             Text("Volume:")
             
             HStack() {
                 VolumeSlider(volume: $bindableTrack.volume)
-                    .padding(.horizontal)
                 Toggle(isOn: $bindableTrack.mute) {
                     Image(systemName: "speaker.slash")
                     .font(.system(size: 10, weight: .medium))
@@ -46,8 +47,12 @@ struct TrackOptionsView: View {
                 value: $bindableTrack.pan,
                 title: "",
                 minValue: -1.0, maxValue: 1.0,
-            )
+            ).offset(x: 16, y: -16)
+            
+            Spacer()
         }
+        .padding(16)
+        .frame(maxWidth: 160)
     }
 }
 

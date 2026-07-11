@@ -22,7 +22,7 @@ struct miniDawApp: App {
 
 @Observable
 class AudioEngineModel {
-    static let minBPM: Int = 1
+    static let minBPM: Int = 10
     static let maxBPM: Int = 320
     
     var bpm: Int = 120 {
@@ -101,8 +101,8 @@ class AudioEngineModel {
     var displayLink = CADisplayLink()
     
     var Tracks : [Track] = []
-    var currentlySelectedTrack: Track? = nil
-    var currentlyRecordingTrack: Track? = nil
+    weak var currentlySelectedTrack: Track? = nil
+    weak var currentlyRecordingTrack: Track? = nil
     
     var inputNode: AVAudioInputNode?
     var inputFormat = AVAudioFormat()
@@ -184,7 +184,7 @@ class AudioEngineModel {
         
         inputNode = engine.inputNode
         if let inputNode {
-            inputFormat = inputNode.inputFormat(forBus: 0)
+            inputFormat = configureInputFormat(inputNode: inputNode)
             printInputNodeInfo()
             installInputTap(bufferSize: IOBufferSize)
         }
@@ -212,6 +212,15 @@ class AudioEngineModel {
         } catch {
             print("Error starting the player: \(error)")
         }
+    }
+    
+    // todo: let user select mono/stereo
+    private func configureInputFormat(inputNode: AVAudioInputNode) -> AVAudioFormat {
+        let sourceFormat = inputNode.inputFormat(forBus: 0)
+        var settings = sourceFormat.settings
+        settings[AVNumberOfChannelsKey] = min(sourceFormat.channelCount, 2)
+        settings[AVChannelLayoutKey] = nil
+        return AVAudioFormat(settings: settings) ?? sourceFormat
     }
     
     private func loadAudioFileToBuffer(file_name: String, file_extension: String, outputBufferRef: inout AVAudioPCMBuffer) {
@@ -301,7 +310,7 @@ class AudioEngineModel {
         
         inputNode = engine.inputNode
         if let inputNode {
-            inputFormat = inputNode.inputFormat(forBus: 0)
+            inputFormat = configureInputFormat(inputNode: inputNode)
             printInputNodeInfo()
         }
         
@@ -328,10 +337,9 @@ class AudioEngineModel {
             guard let self = self else { return }
             if (!self.isRecording) { return }
             let master = self.inputRecordBuffer
+            self.RecordTime %= TimelineLength
             if (self.RecordTime < 0) {
                 self.RecordTime += self.TimelineLength
-            } else if (self.RecordTime > self.TimelineLength) {
-                self.RecordTime -= self.TimelineLength
             }
             copyBuffer(from: buffer, to: master, atOffset: self.RecordTime, startFrameSrc: 0,
                        frameNumberSrc: buffer.frameLength, loop: true)

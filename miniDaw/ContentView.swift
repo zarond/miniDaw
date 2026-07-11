@@ -18,7 +18,7 @@ struct ContentView: View {
             WorkWindowView()
             .inspector(isPresented: $isInspectorPresented) {
                 InspectorPanelView()
-                    .inspectorColumnWidth(150)
+                    .inspectorColumnWidth(160)
                     .toolbar {
                         Button("", systemImage: "info.circle") {
                             isInspectorPresented.toggle()
@@ -127,13 +127,9 @@ struct NumericalFieldWithStepper: View {
                 .onChange(of: valueString) { oldValue, newValue in
                     // Validate and clamp the input
                     let value_optional = Int(newValue)
-                    if newValue.isEmpty {}
-                    else if let value = value_optional, value == 0 {}
-                    else if let value = value_optional, value >= minValue, value <= maxValue {
+                    if let value = value_optional, value >= minValue, value <= maxValue {
                         if (mainValue == value) { return }
                         mainValue = value
-                    } else {
-                        valueString = String(mainValue)
                     }
                 }
                 .onChange(of: FieldIsFocused) { oldValue, newValue in

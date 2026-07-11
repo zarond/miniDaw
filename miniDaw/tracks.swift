@@ -74,14 +74,14 @@ class Track: Identifiable {
         
         if (type == .recordingTrack) {
             AudioLengthSeconds = 0.0
-            TrackFormat = hardwareInputFormat
+            TrackFormat = Track.model?.inputFormat ?? hardwareInputFormat
         }
         
         engine.attach(Player)
         engine.connect(
             Player,
             to: engine.mainMixerNode,
-            format: type == .backingTrack ? hardwareFormat : hardwareInputFormat)
+            format: type == .backingTrack ? hardwareFormat : TrackFormat)
     }
     
     deinit {
@@ -191,10 +191,11 @@ class Track: Identifiable {
         guard type == .recordingTrack else { return }
         guard !monitorOn else { return }
         guard let engine = Track.engine else { return }
+        guard let model = Track.model else { return }
 
         // Connect input to main mixer
-        let inputFormat = engine.inputNode.inputFormat(forBus: 0)
-        engine.connect(engine.inputNode, to: engine.mainMixerNode, format: inputFormat)
+        let inputFormat = model.inputFormat
+        engine.connect(model.inputNode!, to: engine.mainMixerNode, format: inputFormat)
         // todo: connect to this tracks chain of effects, not globally
 
         monitorOn = true
@@ -204,8 +205,9 @@ class Track: Identifiable {
         guard type == .recordingTrack else { return }
         guard monitorOn else { return }
         guard let engine = Track.engine else { return }
+        guard let model = Track.model else { return }
 
-        engine.disconnectNodeOutput(engine.inputNode)
+        engine.disconnectNodeOutput(model.inputNode!)
 
         monitorOn = false
     }
