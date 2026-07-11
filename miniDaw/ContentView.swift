@@ -9,11 +9,22 @@ import SwiftUI
 internal import UniformTypeIdentifiers
 
 struct ContentView: View {
+    @State var isInspectorPresented: Bool = false
+    
     var body: some View {
         HStack() {
             MainOptionsView()
             Divider()
             WorkWindowView()
+            .inspector(isPresented: $isInspectorPresented) {
+                InspectorPanelView()
+                    .inspectorColumnWidth(150)
+                    .toolbar {
+                        Button("", systemImage: "info.circle") {
+                            isInspectorPresented.toggle()
+                        }
+                    }
+            }
         }
     }
 }
@@ -255,8 +266,32 @@ struct LoadBTButton: View {
 
 struct VolumeSlider: View {
     @Binding var volume: Float
+    @State private var isEditing = false
+    
+    private let maxVolume: Float = 1.42 // Headroom above 1.0
+    
+    var dbValue: String {
+        if volume <= 0 {
+            return "-∞ dB"
+        } else {
+            let db = 20 * log10(Double(volume))
+            return String(format: "%+.1f dB", db)
+        }
+    }
+    
     var body: some View {
-        Slider(value: $volume, in: 0...1)
+        ZStack(alignment: .leading) {
+            Slider(value: $volume, in: 0...maxVolume, onEditingChanged: { editing in
+                isEditing = editing
+            })
+            if isEditing {
+                Text(dbValue)
+                    .font(.caption)
+                    .bold()
+                    .foregroundStyle(.secondary)
+                    .offset(x: 0, y: -10)
+            }
+        }
     }
 }
 

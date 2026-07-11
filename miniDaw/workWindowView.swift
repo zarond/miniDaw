@@ -265,30 +265,34 @@ struct TracksView: View {
     @FocusState private var selectedID: UUID?
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 1){
+        ZStack() {
             Rectangle()
-                .fill(Color(white: 0.2))
-                .frame(width: 205, height: 20)
+                .fill(Color(white: 0.15))
             
-            ForEach(model.Tracks) { track in
-                TrackView(track: track, isFocused: selectedID == track.id)
-                    .focusable()
-                    .focused($selectedID, equals: track.id)
-                    .focusEffectDisabled()
-                    .onDeleteCommand {
-                        model.delete_track(id: selectedID)
-                    }
+            VStack(alignment: .leading, spacing: 1){
+                Rectangle()
+                    .fill(Color(white: 0.2))
+                    .frame(height: 20)
+                
+                ForEach(model.Tracks) { track in
+                    TrackView(track: track, isFocused: selectedID == track.id)
+                        .focusable()
+                        .focused($selectedID, equals: track.id)
+                        .focusEffectDisabled()
+                        .onDeleteCommand {
+                            model.delete_track(id: selectedID)
+                        }
+                }
+                
+                Spacer()
+                
+                BottomButtons(model: model, selectedID: selectedID)
             }
-            
-            Spacer()
-            
-            BottomButtons(model: model, selectedID: selectedID)
-                .frame(width: 205)
+            .onChange(of: selectedID) { oldValue, newValue in
+                model.select_track(id: newValue)
+            }
         }
-        .background(Color(white: 0.15))
-        .onChange(of: selectedID) { oldValue, newValue in
-            model.select_track(id: newValue)
-        }
+        .frame(maxWidth: 230, maxHeight: .infinity)
     }
 }
 
@@ -302,7 +306,6 @@ struct TrackView: View {
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 3)
                 .fill(isFocused ? Color.teal : Color.gray)
-                .frame(width: 205, height: 40)
             
             HStack() {
                 EditableNameTextField(name: $bindableTrack.name)
@@ -310,6 +313,15 @@ struct TrackView: View {
                 
                 VolumeSlider(volume: $bindableTrack.volume)
                     .frame(width: 60)
+                
+                Knob(
+                    value: $bindableTrack.pan,
+                    title: "PAN",
+                    minValue: -1.0, maxValue: 1.0,
+                    hideText: true
+                )
+                    .scaleEffect(0.2)
+                    .frame(width: 16, height: 8)
                 
                 Toggle(isOn: $bindableTrack.mute) {
                     Image(systemName: "speaker.slash")
@@ -334,6 +346,7 @@ struct TrackView: View {
                 }
             }
         }
+        .frame(width: 230, height: 40)
     }
 }
 
@@ -444,6 +457,111 @@ struct BottomButtons: View {
     }
 }
 
+struct Knob: View {
+    @Binding var value: Float // Expected range: 0.0 to 1.0
+    
+    var title: String = "Volume"
+    var minValue: Float = 0.0
+    var maxValue: Float = 1.0
+    var centerValue: Float = 0.0
+    var minAngle: Float = -140.0
+    var maxAngle: Float = 140.0
+    var hideText: Bool = false
+    
+    @State private var dragStartValue: Float? = nil
+    @State private var isDragging: Bool = false
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            if !hideText {
+                Text(title)
+                    .font(.caption)
+                    .fontWeight(.bold)
+            }
+            
+            ZStack {
+                // Background Track
+                Circle()
+                    .trim(from: 0.0, to: 0.78) // Leaves a gap at the bottom
+                    .stroke(Color(white: 0.4), style: StrokeStyle(lineWidth: 16, lineCap: .round))
+                    .rotationEffect(.degrees(130))
+                    .frame(width: 95, height: 95)
+                
+                // Active Value Fill Track
+                let valueRange = maxValue - minValue
+                let relativeValue = (value - minValue) / valueRange
+                let relativeCenter = (centerValue - minValue) / valueRange
+                let from = 0.78 * CGFloat(relativeCenter)
+                let to = 0.78 * CGFloat(relativeValue)
+                Circle()
+                    .trim(from: min(from, to), to: max(from, to))
+                    .stroke(Color.blue, style: StrokeStyle(lineWidth: 16, lineCap: .round))
+                    .rotationEffect(.degrees(130))
+                    .frame(width: 95, height: 95)
+                    .animation(.linear(duration: 0.1), value: value)
+                
+                // The Center Dial Knob
+                Circle()
+                    .fill(Color(white: 0.2))
+                    .shadow(radius: 4)
+                    .frame(width: 80, height: 80)
+                    .overlay(
+                        // Indicator dot/line
+                        Circle()
+                            .fill(Color.blue)
+                            .frame(width: 16, height: 16)
+                            .offset(y: -30) // Push it to the outer rim
+                    )
+                    .rotationEffect(.degrees(Double(currentAngle)))
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { gesture in
+                                isDragging = true
+                                handleDrag(gesture: gesture)
+                            }
+                            .onEnded { _ in
+                                dragStartValue = nil
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    isDragging = false
+                                }
+                            }
+                    )
+                    .simultaneousGesture(
+                        TapGesture()
+                            .modifiers(.control)
+                            .onEnded {
+                                value = centerValue
+                            }
+                    )
+            }
+            
+            if (!hideText){
+                Text("\(Int(value * 100))%")
+                    .font(.body)
+                    .monospacedDigit()
+                    .fontWeight(.semibold)
+            }
+        }
+    }
+    
+    // Dynamic angle mapping based on value
+    private var currentAngle: Float {
+        let totalRange = maxAngle - minAngle
+        let valueRange = maxValue - minValue
+        let value_relative = (value - minValue) / valueRange
+        return minAngle + (value_relative * totalRange)
+    }
+    
+    private func handleDrag(gesture: DragGesture.Value) {
+        let scalingFactor: Float = 150.0 // Adjust for sensitivity!
+        if dragStartValue == nil {
+            dragStartValue = value
+        }
+        let newValue = (dragStartValue ?? value) + Float(gesture.translation.width) / scalingFactor
+        value = max(minValue, min(maxValue, newValue))
+    }
+}
+
 #Preview {
     var model = AudioEngineModel()
     model.Tracks = [
@@ -454,3 +572,13 @@ struct BottomButtons: View {
     return WorkWindowView().environment(model)
 }
 
+#Preview {
+    @Previewable @State var volume : Float = 0
+    @Previewable @State var pan : Float = 0
+    HStack() {
+        Knob(value: $volume, title: "Volume")
+            .padding()
+        Knob(value: $pan, title: "Pan", minValue: -1.0, maxValue: 1.0)
+            .padding()
+    }
+}

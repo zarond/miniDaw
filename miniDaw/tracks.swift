@@ -30,6 +30,11 @@ class Track: Identifiable {
             Player.volume = mute ? 0.0 : volume
         }
     }
+    var pan: Float = 0.0 {
+        didSet {
+            Player.pan = pan
+        }
+    }
     private(set) var monitorOn: Bool = false
     
     static weak var engine : AVAudioEngine?
