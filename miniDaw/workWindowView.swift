@@ -296,6 +296,9 @@ struct TracksView: View {
             .onChange(of: selectedID) { oldValue, newValue in
                 model.select_track(id: newValue)
             }
+            .onAppear() {
+                focusedID = model.currentlySelectedTrack?.id
+            }
         }
         .frame(maxWidth: 230, maxHeight: .infinity)
     }

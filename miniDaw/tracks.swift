@@ -69,19 +69,19 @@ class Track: Identifiable {
         
         guard let engine = Track.engine else { return }
         
-        let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
-        let hardwareInputFormat = engine.inputNode.inputFormat(forBus: 0)
+        let inputFormat = Track.model!.inputFormat
+        let outputFormat = Track.model!.outputFormat
+        
+        engine.attach(Player)
         
         if (type == .recordingTrack) {
             AudioLengthSeconds = 0.0
-            TrackFormat = Track.model?.inputFormat ?? hardwareInputFormat
+            TrackFormat = inputFormat
         }
-        
-        engine.attach(Player)
         engine.connect(
             Player,
             to: engine.mainMixerNode,
-            format: type == .backingTrack ? hardwareFormat : TrackFormat)
+            format: outputFormat)
     }
     
     deinit {

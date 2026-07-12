@@ -106,6 +106,9 @@ class AudioEngineModel {
     
     var inputNode: AVAudioInputNode?
     var inputFormat = AVAudioFormat()
+    var outputFormat = AVAudioFormat()
+    private(set) var inputIsMono = false
+    
     var inputRecordBuffer = AVAudioPCMBuffer()
     var RecordTime = AVAudioFramePosition()         // relative time on timeline
     var RecordStartTime = AVAudioFramePosition()    // relative time on timeline
@@ -132,6 +135,7 @@ class AudioEngineModel {
         Track.engine = self.engine
         Track.model = self
         create_recording_track()
+        select_track(id: Tracks.first?.id)
     }
     
     enum InputError: Error {
@@ -184,25 +188,30 @@ class AudioEngineModel {
         
         inputNode = engine.inputNode
         if let inputNode {
-            inputFormat = configureInputFormat(inputNode: inputNode)
+            inputFormat = configureFormat(inputNode.inputFormat(forBus: 0))
+            inputIsMono = (inputFormat.channelCount == 1)
             printInputNodeInfo()
             installInputTap(bufferSize: IOBufferSize)
         }
         
         let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
+        print("Output Hardware format is:", hardwareFormat)
         
-        if (hardwareFormat.sampleRate != inputFormat.sampleRate) {
-            print("Error: Hardware sample rate does not match input sample rate.")
+        outputFormat = configureFormat(hardwareFormat)
+        print("Output DAW format is:", outputFormat)
+        
+        if (outputFormat.sampleRate != inputFormat.sampleRate) {
+            print("Error: output sample rate does not match input sample rate.")
         }
 
         engine.connect(
             metronomePlayer,
             to: engine.mainMixerNode,
-            format: hardwareFormat)
+            format: outputFormat)
 
         engine.prepare()
         
-        EngineSampleRate = hardwareFormat.sampleRate
+        EngineSampleRate = outputFormat.sampleRate
         
         configureLowLatencyBuffer(bufferSize: IOBufferSize)
 
@@ -214,9 +223,8 @@ class AudioEngineModel {
         }
     }
     
-    // todo: let user select mono/stereo
-    private func configureInputFormat(inputNode: AVAudioInputNode) -> AVAudioFormat {
-        let sourceFormat = inputNode.inputFormat(forBus: 0)
+    // clip number of channels to max 2
+    private func configureFormat(_ sourceFormat: AVAudioFormat) -> AVAudioFormat {
         var settings = sourceFormat.settings
         settings[AVNumberOfChannelsKey] = min(sourceFormat.channelCount, 2)
         settings[AVChannelLayoutKey] = nil
@@ -231,18 +239,16 @@ class AudioEngineModel {
         do {
             let file = try AVAudioFile(forReading: url)
             
-            let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
-            
             // Create a format converter to translate file format -> hardware format
-            let converter = AVAudioConverter(from: file.processingFormat, to: hardwareFormat)
+            let converter = AVAudioConverter(from: file.processingFormat, to: outputFormat)
             
             let file_length_seconds = Double(file.length) / file.processingFormat.sampleRate
             
             // Allocate a buffer matching the hardware format
             let inputFileFrameCount = AVAudioFrameCount(file.length)
-            let outputFileFrameCount = AVAudioFrameCount(file_length_seconds * hardwareFormat.sampleRate)
+            let outputFileFrameCount = AVAudioFrameCount(file_length_seconds * outputFormat.sampleRate)
             guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: inputFileFrameCount),
-                  let outputBuffer = AVAudioPCMBuffer(pcmFormat: hardwareFormat, frameCapacity: outputFileFrameCount) else { return }
+                  let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: outputFileFrameCount) else { return }
             
             try? file.read(into: inputBuffer)
             
@@ -310,15 +316,21 @@ class AudioEngineModel {
         
         inputNode = engine.inputNode
         if let inputNode {
-            inputFormat = configureInputFormat(inputNode: inputNode)
+            inputFormat = configureFormat(inputNode.inputFormat(forBus: 0))
+            inputIsMono = (inputFormat.channelCount == 1)
             printInputNodeInfo()
         }
         
         let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
-        if (hardwareFormat.sampleRate != inputFormat.sampleRate) {
-            print("Error: Hardware sample rate does not match input sample rate.")
+        print("Output Hardware format is:", hardwareFormat)
+        
+        outputFormat = configureFormat(hardwareFormat)
+        print("Output DAW format is:", outputFormat)
+        
+        if (outputFormat.sampleRate != inputFormat.sampleRate) {
+            print("Error: output sample rate does not match input sample rate.")
         }
-        EngineSampleRate = hardwareFormat.sampleRate
+        EngineSampleRate =  outputFormat.sampleRate
         
         metronomePlayer.play()
         setupAnimation()
@@ -710,6 +722,28 @@ class AudioEngineModel {
         }
         print("Input Format: \(inputFormat)")
         print("Number of Channels: \(inputFormat.channelCount)")
+    }
+    
+    func configureInputMixer(mono: Bool) {
+        guard let inputNode else { return }
+        guard inputIsMono != mono else { return }
+        if (inputFormat.channelCount == 1) { return }
+        if mono {
+            switchToLeftChannelOnly()
+        } else {
+            switchToFullStereo()
+        }
+        inputIsMono = mono
+    }
+    
+    private func switchToLeftChannelOnly() {
+        guard let inputNode else { return }
+        // todo
+    }
+
+    private func switchToFullStereo() {
+        guard let inputNode else { return }
+        // todo
     }
 }
 
