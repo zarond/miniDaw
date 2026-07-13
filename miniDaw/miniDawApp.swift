@@ -108,6 +108,7 @@ class AudioEngineModel {
     var inputFormat = AVAudioFormat()
     var outputFormat = AVAudioFormat()
     private(set) var inputIsMono = false
+    private var stereoInputIsAvailable = false
     
     var inputRecordBuffer = AVAudioPCMBuffer()
     var RecordTime = AVAudioFramePosition()         // relative time on timeline
@@ -188,7 +189,8 @@ class AudioEngineModel {
         
         inputNode = engine.inputNode
         if let inputNode {
-            inputFormat = configureFormat(inputNode.inputFormat(forBus: 0))
+            stereoInputIsAvailable = (inputNode.inputFormat(forBus: 0).channelCount >= 2)
+            inputFormat = configureFormat(inputNode.inputFormat(forBus: 0), numChannels: 2)
             inputIsMono = (inputFormat.channelCount == 1)
             printInputNodeInfo()
             installInputTap(bufferSize: IOBufferSize)
@@ -224,9 +226,9 @@ class AudioEngineModel {
     }
     
     // clip number of channels to max 2
-    private func configureFormat(_ sourceFormat: AVAudioFormat) -> AVAudioFormat {
+    private func configureFormat(_ sourceFormat: AVAudioFormat, numChannels: UInt32 = 2) -> AVAudioFormat {
         var settings = sourceFormat.settings
-        settings[AVNumberOfChannelsKey] = min(sourceFormat.channelCount, 2)
+        settings[AVNumberOfChannelsKey] = min(sourceFormat.channelCount, numChannels)
         settings[AVChannelLayoutKey] = nil
         return AVAudioFormat(settings: settings) ?? sourceFormat
     }
@@ -302,7 +304,6 @@ class AudioEngineModel {
         //engine.stop() // TODO: properly stop engine
         
         configureLowLatencyBuffer(bufferSize: newSize)
-        installInputTap(bufferSize: newSize)
         
         /* TODO: properly restart engine
         engine.reset()
@@ -316,7 +317,8 @@ class AudioEngineModel {
         
         inputNode = engine.inputNode
         if let inputNode {
-            inputFormat = configureFormat(inputNode.inputFormat(forBus: 0))
+            stereoInputIsAvailable = (inputNode.inputFormat(forBus: 0).channelCount >= 2)
+            inputFormat = configureFormat(inputNode.inputFormat(forBus: 0), numChannels: inputIsMono ? 1 : 2)
             inputIsMono = (inputFormat.channelCount == 1)
             printInputNodeInfo()
         }
@@ -330,7 +332,9 @@ class AudioEngineModel {
         if (outputFormat.sampleRate != inputFormat.sampleRate) {
             print("Error: output sample rate does not match input sample rate.")
         }
-        EngineSampleRate =  outputFormat.sampleRate
+        EngineSampleRate = outputFormat.sampleRate
+        
+        installInputTap(bufferSize: newSize)
         
         metronomePlayer.play()
         setupAnimation()
@@ -725,9 +729,9 @@ class AudioEngineModel {
     }
     
     func configureInputMixer(mono: Bool) {
-        guard let inputNode else { return }
+        if inputNode == nil { return }
         guard inputIsMono != mono else { return }
-        if (inputFormat.channelCount == 1) { return }
+        if (!stereoInputIsAvailable) { return }
         if mono {
             switchToLeftChannelOnly()
         } else {
@@ -738,12 +742,20 @@ class AudioEngineModel {
     
     private func switchToLeftChannelOnly() {
         guard let inputNode else { return }
-        // todo
+        inputFormat = configureFormat(inputNode.inputFormat(forBus: 0), numChannels: 1)
+        Tracks.filter { $0.monitorOn }.forEach { $0.disableMonitoring() }
+        
+        inputNode.removeTap(onBus: 0)
+        installInputTap(bufferSize: IOBufferSize)
     }
 
     private func switchToFullStereo() {
         guard let inputNode else { return }
-        // todo
+        inputFormat = configureFormat(inputNode.inputFormat(forBus: 0), numChannels: 2)
+        Tracks.filter { $0.monitorOn }.forEach { $0.disableMonitoring() }
+        
+        inputNode.removeTap(onBus: 0)
+        installInputTap(bufferSize: IOBufferSize)
     }
 }
 

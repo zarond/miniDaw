@@ -16,13 +16,13 @@ func copyBuffer(from source: AVAudioPCMBuffer,
                 loop : Bool = false)
 {
     // Ensure formats and channel counts match for raw memcpy
-    guard source.format.commonFormat == destination.format.commonFormat,
-          source.format.channelCount == destination.format.channelCount else {
-        assertionFailure("Mismatched buffer formats or channel counts.")
+    guard source.format.commonFormat == destination.format.commonFormat else {
+        assertionFailure("Mismatched buffer formats.")
         return
     }
 
-    let channelCount = Int(source.format.channelCount)
+    let channelCount = Int(destination.format.channelCount)
+    let SRC_channelCount = Int(source.format.channelCount)
     let totalRequested = Int(frameNumberSrc)
     let framesTillEnd = max(0, Int(destination.frameLength) - Int(offsetDst))
     let framesInSrc = max(0, min(Int(source.frameLength) - Int(startFrameSrc), totalRequested))
@@ -32,7 +32,7 @@ func copyBuffer(from source: AVAudioPCMBuffer,
         guard let srcData = source.floatChannelData,
               let dstData = destination.floatChannelData else { return }
         for ch in 0..<channelCount {
-            let src = srcData[ch].advanced(by: Int(startFrameSrc))
+            let src = srcData[ch % SRC_channelCount].advanced(by: Int(startFrameSrc))
             let dst = dstData[ch].advanced(by: Int(offsetDst))
 
             let firstCopyFrames = min(framesInSrc, framesTillEnd)
@@ -52,7 +52,7 @@ func copyBuffer(from source: AVAudioPCMBuffer,
         guard let srcData = source.int16ChannelData,
               let dstData = destination.int16ChannelData else { return }
         for ch in 0..<channelCount {
-            let src = srcData[ch].advanced(by: Int(startFrameSrc))
+            let src = srcData[ch % SRC_channelCount].advanced(by: Int(startFrameSrc))
             let dst = dstData[ch].advanced(by: Int(offsetDst))
 
             let firstCopyFrames = min(framesInSrc, framesTillEnd)
@@ -72,7 +72,7 @@ func copyBuffer(from source: AVAudioPCMBuffer,
         guard let srcData = source.int32ChannelData,
               let dstData = destination.int32ChannelData else { return }
         for ch in 0..<channelCount {
-            let src = srcData[ch].advanced(by: Int(startFrameSrc))
+            let src = srcData[ch % SRC_channelCount].advanced(by: Int(startFrameSrc))
             let dst = dstData[ch].advanced(by: Int(offsetDst))
 
             let firstCopyFrames = min(framesInSrc, framesTillEnd)
@@ -134,21 +134,26 @@ func createZeroedBuffer(format: AVAudioFormat, capacity: AVAudioFrameCount) -> A
     return buffer
 }
 
-func cropped_buffer(from buffer: AVAudioPCMBuffer, start_frame: AVAudioFramePosition, number_frames: AVAudioFrameCount, allow_skip_crop: Bool = true) -> AVAudioPCMBuffer? {
-    if (allow_skip_crop && start_frame == 0 && number_frames >= buffer.frameLength) {
+func cropped_buffer(from buffer: AVAudioPCMBuffer, format: AVAudioFormat, start_frame: AVAudioFramePosition, number_frames: AVAudioFrameCount, allow_skip_crop: Bool = true) -> AVAudioPCMBuffer? {
+    if (allow_skip_crop && start_frame == 0 && number_frames >= buffer.frameLength && format == buffer.format) {
         return buffer
     }
-    guard let segmentBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: number_frames) else {
+    guard let segmentBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: number_frames) else {
+        return nil
+    }
+    guard format.commonFormat == buffer.format.commonFormat else {
+        assertionFailure("Mismatched buffer formats.")
         return nil
     }
     segmentBuffer.frameLength = number_frames
-    let channelCount = Int(buffer.format.channelCount)
+    let channelCount = Int(format.channelCount)
+    let SRC_channelCount = Int(buffer.format.channelCount)
 
     switch buffer.format.commonFormat {
     case .pcmFormatFloat32:
         if let srcData = buffer.floatChannelData, let destData = segmentBuffer.floatChannelData {
             for channel in 0..<channelCount {
-                let src = srcData[channel].advanced(by: Int(start_frame))
+                let src = srcData[channel % SRC_channelCount].advanced(by: Int(start_frame))
                 let dst = destData[channel]
                 let byteCount = Int(number_frames) * MemoryLayout<Float>.size
                 memcpy(dst, src, byteCount)
@@ -157,7 +162,7 @@ func cropped_buffer(from buffer: AVAudioPCMBuffer, start_frame: AVAudioFramePosi
     case .pcmFormatInt16:
         if let srcData = buffer.int16ChannelData, let destData = segmentBuffer.int16ChannelData {
             for channel in 0..<channelCount {
-                let src = srcData[channel].advanced(by: Int(start_frame))
+                let src = srcData[channel % SRC_channelCount].advanced(by: Int(start_frame))
                 let dst = destData[channel]
                 let byteCount = Int(number_frames) * MemoryLayout<Int16>.size
                 memcpy(dst, src, byteCount)
@@ -166,7 +171,7 @@ func cropped_buffer(from buffer: AVAudioPCMBuffer, start_frame: AVAudioFramePosi
     case .pcmFormatInt32:
         if let srcData = buffer.int32ChannelData, let destData = segmentBuffer.int32ChannelData {
             for channel in 0..<channelCount {
-                let src = srcData[channel].advanced(by: Int(start_frame))
+                let src = srcData[channel % SRC_channelCount].advanced(by: Int(start_frame))
                 let dst = destData[channel]
                 let byteCount = Int(number_frames) * MemoryLayout<Int32>.size
                 memcpy(dst, src, byteCount)

@@ -69,14 +69,13 @@ class Track: Identifiable {
         
         guard let engine = Track.engine else { return }
         
-        let inputFormat = Track.model!.inputFormat
         let outputFormat = Track.model!.outputFormat
         
         engine.attach(Player)
         
         if (type == .recordingTrack) {
             AudioLengthSeconds = 0.0
-            TrackFormat = inputFormat
+            TrackFormat = outputFormat
         }
         engine.connect(
             Player,
@@ -133,12 +132,12 @@ class Track: Identifiable {
             let engineWhen = AVAudioTime(sampleTime: sampleTime, atRate: model.EngineSampleRate)
             let when = Player.playerTime(forNodeTime: engineWhen)
             let number_frames = AVAudioFrameCount(max(min(RegionStopTime, model.TimelineLength) - RegionStartTime, 0))
-            let segmentBuffer = cropped_buffer(from: RecordBuffer, start_frame: 0, number_frames: number_frames) ?? AVAudioPCMBuffer()
+            let segmentBuffer = cropped_buffer(from: RecordBuffer, format: TrackFormat, start_frame: 0, number_frames: number_frames) ?? AVAudioPCMBuffer()
             Player.scheduleBuffer(segmentBuffer, at: when)
         } else if (model.currTime < RegionStopTime) {
             let start_frame = model.currTime - RegionStartTime
             let number_frames = AVAudioFrameCount(max(min(RegionStopTime, model.TimelineLength) - RegionStartTime - start_frame, 0))
-            let segmentBuffer = cropped_buffer(from: RecordBuffer, start_frame: start_frame, number_frames: number_frames) ?? AVAudioPCMBuffer()
+            let segmentBuffer = cropped_buffer(from: RecordBuffer, format: TrackFormat, start_frame: start_frame, number_frames: number_frames) ?? AVAudioPCMBuffer()
             Player.scheduleBuffer(segmentBuffer)
         }
     }
@@ -153,7 +152,7 @@ class Track: Identifiable {
         
         if (RecordBuffer == nil) {
             let number_frames = AVAudioFrameCount(max(RecordStopTime - RecordStartTime, 0))
-            RecordBuffer = cropped_buffer(from: buffer, start_frame: RecordStartTime, number_frames: number_frames, allow_skip_crop: false)
+            RecordBuffer = cropped_buffer(from: buffer, format: TrackFormat, start_frame: RecordStartTime, number_frames: number_frames, allow_skip_crop: false)
             
             RegionStartTime = RecordStartTime
             RegionStopTime = RecordStopTime

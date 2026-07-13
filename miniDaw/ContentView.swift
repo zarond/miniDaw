@@ -91,10 +91,23 @@ struct MainOptionsView: View {
                 }
             }
             .pickerStyle(.menu)
-            .frame(width: 140)
             .onChange(of: selectedBufferSize) { oldValue, newValue in
                 _ = model.changeBufferFrameSize(to: newValue)
             }
+            
+            let monoBinding = Binding<Bool>(
+                get: { model.inputIsMono },
+                set: { newValue in
+                    model.configureInputMixer(mono: newValue)
+                }
+            )
+            Toggle(isOn: monoBinding) {
+                HStack(){
+                    Image(systemName: "microphone")
+                    Text("Mono Input")
+                }
+            }
+            .toggleStyle(.checkbox)
             
             Text("Output Sound Volume:")
                 .padding(.top, 10)
