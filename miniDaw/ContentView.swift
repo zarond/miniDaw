@@ -18,7 +18,7 @@ struct ContentView: View {
             WorkWindowView()
             .inspector(isPresented: $isInspectorPresented) {
                 InspectorPanelView()
-                    .inspectorColumnWidth(160)
+                    .inspectorColumnWidth(300)
                     .toolbar {
                         Button("", systemImage: "info.circle") {
                             isInspectorPresented.toggle()

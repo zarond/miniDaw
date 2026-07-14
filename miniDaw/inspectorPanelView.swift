@@ -24,35 +24,61 @@ struct TrackOptionsView: View {
     let track : Track
     var body: some View {
         @Bindable var bindableTrack = track
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Track name:")
-            
-            EditableNameTextField(name: $bindableTrack.name)
-            
-            Text("Volume:")
-            
-            HStack() {
-                VolumeSlider(volume: $bindableTrack.volume)
-                Toggle(isOn: $bindableTrack.mute) {
-                    Image(systemName: "speaker.slash")
-                    .font(.system(size: 10, weight: .medium))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Track name:")
+                    .bold()
+                
+                EditableNameTextField(name: $bindableTrack.name)
+                
+                Text("Volume:")
+                    .bold()
+                
+                HStack() {
+                    VolumeSlider(volume: $bindableTrack.volume)
+                    Toggle(isOn: $bindableTrack.mute) {
+                        Image(systemName: "speaker.slash")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .frame(width: 16, height: 8)
+                    .toggleStyle(.button)
                 }
-                .frame(width: 16, height: 8)
-                .toggleStyle(.button)
+                
+                Text("Pan:")
+                    .bold()
+                
+                Knob(
+                    value: $bindableTrack.pan,
+                    title: "",
+                    minValue: -1.0, maxValue: 1.0,
+                ).offset(x: 16, y: -16)
+                
+                Divider()
+                if track.effectsManager != nil {
+                    EffectsOptions(manager: track.effectsManager!)
+                }
             }
-            
-            Text("Pan:")
-            
-            Knob(
-                value: $bindableTrack.pan,
-                title: "",
-                minValue: -1.0, maxValue: 1.0,
-            ).offset(x: 16, y: -16)
-            
-            Spacer()
+            .padding(16)
+            .frame(maxWidth: 300)
         }
-        .padding(16)
-        .frame(maxWidth: 160)
+    }
+}
+
+struct EffectsOptions: View {
+    let manager: AudioEffectsManager
+    var body: some View {
+        Text("Effects:")
+            .bold()
+        //Divider()
+        //PitchControls(timePitch: manager.timePitch)
+        Divider()
+        EQBandControl(eq: manager.eq, index: 0)
+        Divider()
+        DistortionControls(distortion: manager.distortion)
+        Divider()
+        DelayControls(delay: manager.delay)
+        Divider()
+        ReverbControls(reverb: manager.reverb)
     }
 }
 

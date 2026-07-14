@@ -41,6 +41,7 @@ class Track: Identifiable {
     static weak var model : AudioEngineModel?
     
     let Player = AVAudioPlayerNode()
+    let preFXMixer = AVAudioMixerNode()
     
     var BTAudioFile : AVAudioFile?
     var BTAudioLengthSamples = AVAudioFramePosition()
@@ -54,9 +55,16 @@ class Track: Identifiable {
     var RegionStartTime = AVAudioFramePosition(0)    // relative time on timeline
     var RegionStopTime = AVAudioFramePosition(0)     // relative time on timeline
     
+    var effectsManager: AudioEffectsManager?
+    
     init(name: String, type: TrackType, audioFile: AVAudioFile? = nil) {
         self.name = name
         self.type = type
+        
+        guard let engine = Track.engine else { return }
+        guard let model = Track.model else { return }
+        
+        effectsManager = AudioEffectsManager(model: model, engine: engine)
         
         if let audioFile = audioFile {
             BTAudioFile = audioFile
@@ -67,11 +75,10 @@ class Track: Identifiable {
             RegionStopTime = AVAudioFramePosition(AudioLengthSeconds * (Track.model?.EngineSampleRate ?? 0))
         }
         
-        guard let engine = Track.engine else { return }
-        
         let outputFormat = Track.model!.outputFormat
         
         engine.attach(Player)
+        engine.attach(preFXMixer)
         
         if (type == .recordingTrack) {
             AudioLengthSeconds = 0.0
@@ -79,7 +86,13 @@ class Track: Identifiable {
         }
         engine.connect(
             Player,
-            to: engine.mainMixerNode,
+            to: preFXMixer,
+            format: outputFormat)
+        
+        engine.connect(
+            preFXMixer,
+            to: effectsManager!.eq,
+            //to: engine.mainMixerNode,
             format: outputFormat)
     }
     
@@ -194,8 +207,7 @@ class Track: Identifiable {
 
         // Connect input to main mixer
         let inputFormat = model.inputFormat
-        engine.connect(model.inputNode!, to: engine.mainMixerNode, format: inputFormat)
-        // todo: connect to this tracks chain of effects, not globally
+        engine.connect(model.inputNode!, to: preFXMixer, format: inputFormat)
 
         monitorOn = true
     }
