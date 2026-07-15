@@ -47,11 +47,7 @@ struct TrackOptionsView: View {
                 Text("Pan:")
                     .bold()
                 
-                Knob(
-                    value: $bindableTrack.pan,
-                    title: "",
-                    minValue: -1.0, maxValue: 1.0,
-                ).offset(x: 16, y: -16)
+                LabeledSlider(title: "", value: $bindableTrack.pan, range: -1.0...1.0)
                 
                 Divider()
                 if track.effectsManager != nil {
@@ -60,6 +56,7 @@ struct TrackOptionsView: View {
             }
             .padding(16)
             .frame(maxWidth: 300)
+            .id(track.id)
         }
     }
 }

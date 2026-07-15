@@ -7,6 +7,7 @@
 
 import AVFoundation
 
+@Observable
 final class AudioEffectsManager {
     // Core engine and nodes
     let model : AudioEngineModel
@@ -41,6 +42,41 @@ final class AudioEffectsManager {
         //timePitch.overlap = 8.0
 
         eq.globalGain = 0
+
+        // EQ band defaults for 4 bands: high pass, parametric, parametric, low pass
+        if eq.bands.count >= 4 {
+            // High-pass band
+            let band0 = eq.bands[0]
+            band0.filterType = .highPass
+            band0.frequency = 80
+            band0.bandwidth = 1.0
+            band0.gain = 0.0
+            band0.bypass = false
+
+            // Low-mid parametric
+            let band1 = eq.bands[1]
+            band1.filterType = .parametric
+            band1.frequency = 500
+            band1.bandwidth = 1.0
+            band1.gain = 0.0
+            band1.bypass = false
+
+            // High-mid parametric
+            let band2 = eq.bands[2]
+            band2.filterType = .parametric
+            band2.frequency = 4000
+            band2.bandwidth = 1.0
+            band2.gain = 0.0
+            band2.bypass = false
+
+            // Low-pass band
+            let band3 = eq.bands[3]
+            band3.filterType = .lowPass
+            band3.frequency = 12000
+            band3.bandwidth = 1.0
+            band3.gain = 0.0
+            band3.bypass = false
+        }
 
         // Distortion
         distortion.loadFactoryPreset(.multiDistortedCubed)

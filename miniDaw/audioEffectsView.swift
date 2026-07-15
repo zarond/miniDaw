@@ -119,23 +119,82 @@ extension AVAudioUnitEQFilterType: CaseIterable, CustomStringConvertible {
     }
 }
 
-struct LabeledSlider: View {
+struct LabeledSlider<V>: View where V: BinaryFloatingPoint, V.Stride: BinaryFloatingPoint {
     let title: String
-    @Binding var value: Double
-    let range: ClosedRange<Double>
+    @Binding var value: V
+    let range: ClosedRange<V>
+    var isLogarithmic: Bool = false
     var onChange: (() -> Void)? = nil
 
+    // Create a localized formatter for the Float/Double value
+    private var formatter: NumberFormatter {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.minimumFractionDigits = 2
+        f.maximumFractionDigits = 2
+        f.decimalSeparator = "."
+        return f
+    }
+    
+    // Helper bounds converted to Double for calculations
+    private var minVal: Double { Double(range.lowerBound) }
+    private var maxVal: Double { Double(range.upperBound) }
+    
     var body: some View {
         HStack {
-            Text(title)
+            if (!title.isEmpty) {
+                Text(title)
+                    .frame(width: 60, alignment: .trailing)
+            }
             Slider(value: Binding(
+                get: {
+                    if isLogarithmic {
+                        return V(linearValue(Double(value)))
+                    } else {
+                        return value
+                    }
+                },
+                set: { sliderVal in
+                    if isLogarithmic {
+                        value = V(exponentialValue(Double(sliderVal)))
+                    } else {
+                        value = V(sliderVal)
+                    }
+                    onChange?()
+                }
+            ), in: isLogarithmic ? 0.0...1.0 : range)
+            TextField("", value: Binding(
                 get: { value },
-                set: { value = $0; onChange?() }
-            ), in: range)
-            Text(String(format: "%.2f", value))
-                .monospacedDigit()
-                .frame(width: 65, alignment: .trailing)
+                set: { newValue in
+                    // Clamp the entered keyboard value to the allowed range
+                    let clamped = max(range.lowerBound, min(newValue, range.upperBound))
+                    value = clamped
+                    onChange?()
+                }
+            ), formatter: formatter)
+            .multilineTextAlignment(.trailing)
+            .monospacedDigit()
+            .frame(width: 65)
+            .textFieldStyle(.roundedBorder)
         }
+    }
+    
+    /// Maps a normalized [0, 1] slider position to the exponential target range
+    private func exponentialValue(_ sliderValue: Double) -> Double {
+        // Prevent log(0) issues by ensuring bounds are positive
+        let floor = max(minVal, 0.0001)
+        let ceil = max(maxVal, floor + 0.0001)
+        
+        return floor * pow(ceil / floor, sliderValue)
+    }
+
+    /// Maps an actual value back to a normalized [0, 1] slider position
+    private func linearValue(_ actualValue: Double) -> Double {
+        let floor = max(minVal, 0.0001)
+        let ceil = max(maxVal, floor + 0.0001)
+        let clampedActual = max(floor, min(actualValue, ceil))
+        
+        return log(clampedActual / floor) / log(ceil / floor)
     }
 }
 
@@ -160,8 +219,8 @@ struct ReverbControls: View {
                 }
                 .onChange(of: preset) { reverb.loadFactoryPreset(preset) }
                 LabeledSlider(title: "Dry/Wet", value: Binding(
-                    get: { Double(mix) },
-                    set: { mix = Float($0); reverb.wetDryMix = mix }
+                    get: { mix },
+                    set: { mix = $0; reverb.wetDryMix = mix }
                 ), range: 0...100)
             }
         }
@@ -197,18 +256,18 @@ struct DelayControls: View {
                     delay.delayTime = time
                 }
                 LabeledSlider(title: "Feedback", value: Binding(
-                    get: { Double(feedback) },
-                    set: { feedback = Float($0); delay.feedback = feedback }
+                    get: { feedback },
+                    set: { feedback = $0; delay.feedback = feedback }
                 ), range: -100...100)
                 
                 LabeledSlider(title: "LP Cutoff", value: Binding(
-                    get: { Double(cutoff) },
-                    set: { cutoff = Float($0); delay.lowPassCutoff = cutoff }
-                ), range: 1000...20000)
+                    get: { cutoff },
+                    set: { cutoff = $0; delay.lowPassCutoff = cutoff }
+                ), range: 1000...20000, isLogarithmic: true)
                 
                 LabeledSlider(title: "Dry/Wet", value: Binding(
-                    get: { Double(mix) },
-                    set: { mix = Float($0); delay.wetDryMix = mix }
+                    get: { mix },
+                    set: { mix = $0; delay.wetDryMix = mix }
                 ), range: 0...100)
             }
         }
@@ -287,13 +346,13 @@ struct DistortionControls: View {
                 .onChange(of: preset) { distortion.loadFactoryPreset(preset) }
                 
                 LabeledSlider(title: "Pre-gain", value: Binding(
-                    get: { Double(preGain) },
-                    set: { preGain = Float($0); distortion.preGain = preGain }
+                    get: { preGain },
+                    set: { preGain = $0; distortion.preGain = preGain }
                 ), range: -80...20)
                 
                 LabeledSlider(title: "Dry/Wet", value: Binding(
-                    get: { Double(mix) },
-                    set: { mix = Float($0); distortion.wetDryMix = mix }
+                    get: { mix },
+                    set: { mix = $0; distortion.wetDryMix = mix }
                 ), range: 0...100)
             }
         }
@@ -322,14 +381,16 @@ struct EQBandControl: View {
                 set: { unitBypass = !$0; eq.bypass = unitBypass }
             )).bold()
             if (!unitBypass) {
-                LabeledSlider(title: "Global Gain", value: Binding(
-                    get: { Double(globalGain) },
-                    set: { globalGain = Float($0); eq.globalGain = globalGain }
+                LabeledSlider(title: "Gain", value: Binding(
+                    get: { globalGain },
+                    set: { globalGain = $0; eq.globalGain = globalGain }
                 ), range: -96...24)
                 ForEach(0..<eq.bands.count, id: \.self) { index in
                     EQSingleBandControl(band: eq.bands[index], index: index)
                 }
             }
+        }.onAppear {
+            unitBypass = eq.bypass
         }
     }
 }
@@ -360,16 +421,16 @@ struct EQSingleBandControl: View {
                 }
                 .onChange(of: filterType) { band.filterType = filterType }
                 LabeledSlider(title: "Freq", value: Binding(
-                    get: { Double(freq) },
-                    set: { freq = Float($0); band.frequency = freq }
-                ), range: 20...20000)
+                    get: { freq },
+                    set: { freq = $0; band.frequency = freq }
+                ), range: 20...20000, isLogarithmic: true)
                 LabeledSlider(title: "Gain", value: Binding(
-                    get: { Double(gain) },
-                    set: { gain = Float($0); band.gain = gain }
+                    get: { gain },
+                    set: { gain = $0; band.gain = gain }
                 ), range: -96...24)
                 LabeledSlider(title: "Q", value: Binding(
-                    get: { Double(q) },
-                    set: { q = Float($0); band.bandwidth = q }
+                    get: { q },
+                    set: { q = $0; band.bandwidth = q }
                 ), range: 0.05...5.0)
             }
         }
