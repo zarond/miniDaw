@@ -96,6 +96,49 @@ extension AVAudioUnitDistortionPreset: CaseIterable, CustomStringConvertible {
     }
 }
 
+extension AVAudioUnitEQFilterType: CaseIterable, CustomStringConvertible {
+    public static var allCases: [AVAudioUnitEQFilterType] {
+        return [.parametric, .lowPass, .highPass, .resonantLowPass, .resonantHighPass, .bandPass, .bandStop, .lowShelf, .highShelf, .resonantLowShelf, .resonantHighShelf]
+    }
+    
+    public var description : String {
+        switch self {
+        case .parametric: return "Parametric"
+        case .lowPass: return "Low Pass"
+        case .highPass: return "High Pass"
+        case .resonantLowPass: return "Resonant Low Pass"
+        case .resonantHighPass: return "Resonant High Pass"
+        case .bandPass: return "Band Pass"
+        case .bandStop: return "Band Stop"
+        case .lowShelf: return "Low Shelf"
+        case .highShelf: return "High Shelf"
+        case .resonantLowShelf: return "Resonant Low Shelf"
+        case .resonantHighShelf: return "Resonant High Shelf"
+        @unknown default: return "Unknown"
+        }
+    }
+}
+
+struct LabeledSlider: View {
+    let title: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var onChange: (() -> Void)? = nil
+
+    var body: some View {
+        HStack {
+            Text(title)
+            Slider(value: Binding(
+                get: { value },
+                set: { value = $0; onChange?() }
+            ), in: range)
+            Text(String(format: "%.2f", value))
+                .monospacedDigit()
+                .frame(width: 65, alignment: .trailing)
+        }
+    }
+}
+
 struct ReverbControls: View {
     let reverb: AVAudioUnitReverb
     @State private var mix: Float = 30
@@ -103,24 +146,23 @@ struct ReverbControls: View {
     @State private var bypass = false
 
     var body: some View {
-        VStack(alignment: .leading) {
+        VStack(alignment: .leading, spacing: 12) {
             Toggle("Reverb", isOn: Binding(
                 get: { !bypass },
                 set: { bypass = !$0; reverb.bypass = bypass }
             )).bold()
-            Picker("Preset", selection: $preset) {
-                ForEach(AVAudioUnitReverbPreset.allCases, id: \.self) { preset in
-                    Text(preset.description)
-                        .tag(preset)
+            if (!bypass) {
+                Picker("Preset", selection: $preset) {
+                    ForEach(AVAudioUnitReverbPreset.allCases, id: \.self) { preset in
+                        Text(preset.description)
+                            .tag(preset)
+                    }
                 }
-            }
-            .onChange(of: preset) { reverb.loadFactoryPreset(preset) }
-            HStack {
-                Text("Wet/Dry \(Int(mix))%")
-                Slider(value: Binding(
+                .onChange(of: preset) { reverb.loadFactoryPreset(preset) }
+                LabeledSlider(title: "Dry/Wet", value: Binding(
                     get: { Double(mix) },
                     set: { mix = Float($0); reverb.wetDryMix = mix }
-                ), in: 0...100)
+                ), range: 0...100)
             }
         }
         .onAppear {
@@ -150,23 +192,25 @@ struct DelayControls: View {
                 get: { !bypass },
                 set: { bypass = !$0; delay.bypass = bypass }
             )).bold()
-            LabeledSlider(title: "Time", value: $time, range: 0...1) {
-                delay.delayTime = time
+            if (!bypass) {
+                LabeledSlider(title: "Time", value: $time, range: 0...2) {
+                    delay.delayTime = time
+                }
+                LabeledSlider(title: "Feedback", value: Binding(
+                    get: { Double(feedback) },
+                    set: { feedback = Float($0); delay.feedback = feedback }
+                ), range: -100...100)
+                
+                LabeledSlider(title: "LP Cutoff", value: Binding(
+                    get: { Double(cutoff) },
+                    set: { cutoff = Float($0); delay.lowPassCutoff = cutoff }
+                ), range: 1000...20000)
+                
+                LabeledSlider(title: "Dry/Wet", value: Binding(
+                    get: { Double(mix) },
+                    set: { mix = Float($0); delay.wetDryMix = mix }
+                ), range: 0...100)
             }
-            LabeledSlider(title: "Feedback", value: Binding(
-                get: { Double(feedback) },
-                set: { feedback = Float($0); delay.feedback = feedback }
-            ), range: 0...100)
-
-            LabeledSlider(title: "LP Cutoff", value: Binding(
-                get: { Double(cutoff) },
-                set: { cutoff = Float($0); delay.lowPassCutoff = cutoff }
-            ), range: 1000...20000)
-
-            LabeledSlider(title: "Wet/Dry", value: Binding(
-                get: { Double(mix) },
-                set: { mix = Float($0); delay.wetDryMix = mix }
-            ), range: 0...100)
         }
         .onAppear {
             // Initialize state from unit
@@ -175,32 +219,6 @@ struct DelayControls: View {
             feedback = delay.feedback
             cutoff = delay.lowPassCutoff
             mix = delay.wetDryMix
-            // Apply back to ensure sync
-            delay.bypass = bypass
-            delay.delayTime = time
-            delay.feedback = feedback
-            delay.lowPassCutoff = cutoff
-            delay.wetDryMix = mix
-        }
-    }
-}
-
-struct LabeledSlider: View {
-    let title: String
-    @Binding var value: Double
-    let range: ClosedRange<Double>
-    var onChange: (() -> Void)? = nil
-
-    var body: some View {
-        HStack {
-            Text(title)
-            Slider(value: Binding(
-                get: { value },
-                set: { value = $0; onChange?() }
-            ), in: range)
-            Text(String(format: "%.2f", value))
-                .monospacedDigit()
-                .frame(width: 60, alignment: .trailing)
         }
     }
 }
@@ -217,22 +235,24 @@ struct PitchControls: View {
                 get: { !bypass },
                 set: { bypass = !$0; timePitch.bypass = bypass }
             )).bold()
-            HStack {
-                Text("Pitch (cents)")
-                Slider(value: Binding(
-                    get: { Double(cents) },
-                    set: { cents = Float($0); timePitch.pitch = cents }
-                ), in: -2400...2400)
-                Text("\(Int(cents))")
-            }
-
-            HStack {
-                Text("Overlap")
-                Slider(value: Binding(
-                    get: { Double(overlap) },
-                    set: { overlap = Float($0); timePitch.overlap = overlap }
-                ), in: 3...32)
-                Text(String(format: "%.1f", overlap))
+            if (!bypass) {
+                HStack {
+                    Text("Pitch (cents)")
+                    Slider(value: Binding(
+                        get: { Double(cents) },
+                        set: { cents = Float($0); timePitch.pitch = cents }
+                    ), in: -2400...2400)
+                    Text("\(Int(cents))")
+                }
+                
+                HStack {
+                    Text("Overlap")
+                    Slider(value: Binding(
+                        get: { Double(overlap) },
+                        set: { overlap = Float($0); timePitch.overlap = overlap }
+                    ), in: 3...32)
+                    Text(String(format: "%.1f", overlap))
+                }
             }
         }
         .onAppear {
@@ -240,10 +260,6 @@ struct PitchControls: View {
             bypass = timePitch.bypass
             cents = timePitch.pitch
             overlap = timePitch.overlap
-            // Apply back to ensure sync
-            timePitch.bypass = bypass
-            timePitch.pitch = cents
-            timePitch.overlap = overlap
         }
     }
 }
@@ -251,6 +267,7 @@ struct PitchControls: View {
 struct DistortionControls: View {
     let distortion: AVAudioUnitDistortion
     @State private var mix: Float = 25
+    @State private var preGain: Float = -6
     @State private var preset: AVAudioUnitDistortionPreset = .multiDistortedCubed
     @State private var bypass = false
 
@@ -260,20 +277,24 @@ struct DistortionControls: View {
                 get: { !bypass },
                 set: { bypass = !$0; distortion.bypass = bypass }
             )).bold()
-            Picker("Preset", selection: $preset) {
-                ForEach(AVAudioUnitDistortionPreset.allCases, id: \.self) { preset in
-                    Text(preset.description)
-                        .tag(preset)
+            if (!bypass) {
+                Picker("Preset", selection: $preset) {
+                    ForEach(AVAudioUnitDistortionPreset.allCases, id: \.self) { preset in
+                        Text(preset.description)
+                            .tag(preset)
+                    }
                 }
-            }
-            .onChange(of: preset) { distortion.loadFactoryPreset(preset) }
-
-            HStack {
-                Text("Wet/Dry \(Int(mix))%")
-                Slider(value: Binding(
+                .onChange(of: preset) { distortion.loadFactoryPreset(preset) }
+                
+                LabeledSlider(title: "Pre-gain", value: Binding(
+                    get: { Double(preGain) },
+                    set: { preGain = Float($0); distortion.preGain = preGain }
+                ), range: -80...20)
+                
+                LabeledSlider(title: "Dry/Wet", value: Binding(
                     get: { Double(mix) },
                     set: { mix = Float($0); distortion.wetDryMix = mix }
-                ), in: 0...100)
+                ), range: 0...100)
             }
         }
         .onAppear {
@@ -291,58 +312,83 @@ struct DistortionControls: View {
 
 struct EQBandControl: View {
     let eq: AVAudioUnitEQ
-    let index: Int
-    @State private var freq: Float = 1000
-    @State private var gain: Float = 0
-    @State private var q: Float = 1.0
-    @State private var bypass = false
+    @State private var globalGain: Float = 0
     @State private var unitBypass = false
-
+    
     var body: some View {
         VStack(alignment: .leading) {
             Toggle("EQ", isOn: Binding(
                 get: { !unitBypass },
                 set: { unitBypass = !$0; eq.bypass = unitBypass }
             )).bold()
-            Toggle("Bypass Band \(index)", isOn: Binding(
-                get: { bypass },
-                set: { bypass = $0; apply() }
-            ))
-            LabeledSlider(title: "Freq", value: Binding(
-                get: { Double(freq) },
-                set: { freq = Float($0); apply() }
-            ), range: 20...20000)
-            LabeledSlider(title: "Gain", value: Binding(
-                get: { Double(gain) },
-                set: { gain = Float($0); apply() }
-            ), range: -24...24)
-            LabeledSlider(title: "Q", value: Binding(
-                get: { Double(q) },
-                set: { q = Float($0); apply() }
-            ), range: 0.1...5.0)
-        }
-        .onAppear {
-            unitBypass = eq.bypass
-            guard index >= 0 && index < eq.bands.count else { return }
-            let band = eq.bands[index]
-            // Initialize state from the unit
-            freq = band.frequency
-            gain = band.gain
-            q = band.bandwidth
-            bypass = band.bypass
-            // Apply back to ensure sync
-            eq.bypass = unitBypass
-            apply()
+            if (!unitBypass) {
+                LabeledSlider(title: "Global Gain", value: Binding(
+                    get: { Double(globalGain) },
+                    set: { globalGain = Float($0); eq.globalGain = globalGain }
+                ), range: -96...24)
+                ForEach(0..<eq.bands.count, id: \.self) { index in
+                    EQSingleBandControl(band: eq.bands[index], index: index)
+                }
+            }
         }
     }
+}
 
-    private func apply() {
-        guard index >= 0 && index < eq.bands.count else { return }
-        let band = eq.bands[index]
-        band.filterType = .parametric
-        band.frequency = freq
-        band.bandwidth = q
-        band.gain = gain
-        band.bypass = bypass
+struct EQSingleBandControl: View {
+    let band: AVAudioUnitEQFilterParameters
+    let index: Int
+    @State private var freq: Float = 1000
+    @State private var gain: Float = 0
+    @State private var q: Float = 1.0
+    @State private var bypass = false
+    @State private var filterType: AVAudioUnitEQFilterType = .parametric
+    
+    @State private var isExpanded = false
+
+    var body: some View {
+        DisclosureGroup("EQ Band \(index)", isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("Bypass Band \(index)", isOn: Binding(
+                    get: { bypass },
+                    set: { bypass = $0; band.bypass = bypass }
+                ))
+                Picker("Filter type", selection: $filterType) {
+                    ForEach(AVAudioUnitEQFilterType.allCases, id: \.self) { preset in
+                        Text(preset.description)
+                            .tag(preset)
+                    }
+                }
+                .onChange(of: filterType) { band.filterType = filterType }
+                LabeledSlider(title: "Freq", value: Binding(
+                    get: { Double(freq) },
+                    set: { freq = Float($0); band.frequency = freq }
+                ), range: 20...20000)
+                LabeledSlider(title: "Gain", value: Binding(
+                    get: { Double(gain) },
+                    set: { gain = Float($0); band.gain = gain }
+                ), range: -96...24)
+                LabeledSlider(title: "Q", value: Binding(
+                    get: { Double(q) },
+                    set: { q = Float($0); band.bandwidth = q }
+                ), range: 0.05...5.0)
+            }
+        }
+         .onAppear {
+             // Initialize state from the unit
+             freq = band.frequency
+             gain = band.gain
+             q = band.bandwidth
+             bypass = band.bypass
+             filterType = band.filterType
+         }
     }
+}
+
+#Preview {
+    var model = AudioEngineModel()
+    model.Tracks = [
+        Track(name: "Track 1", type: .backingTrack),
+    ]
+    model.currentlySelectedTrack = model.Tracks[0]
+    return InspectorPanelView().environment(model)
 }

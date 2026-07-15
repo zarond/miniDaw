@@ -72,7 +72,7 @@ struct EffectsOptions: View {
         //Divider()
         //PitchControls(timePitch: manager.timePitch)
         Divider()
-        EQBandControl(eq: manager.eq, index: 0)
+        EQBandControl(eq: manager.eq)
         Divider()
         DistortionControls(distortion: manager.distortion)
         Divider()
@@ -86,8 +86,6 @@ struct EffectsOptions: View {
     var model = AudioEngineModel()
     model.Tracks = [
         Track(name: "Track 1", type: .backingTrack),
-        Track(name: "Track 2", type: .backingTrack),
-        Track(name: "Track 3", type: .recordingTrack)
     ]
     model.currentlySelectedTrack = model.Tracks[0]
     return InspectorPanelView().environment(model)
