@@ -431,6 +431,9 @@ class AudioEngineModel {
     
     func start_recording(){
         guard !isRecording else { return }
+        guard let currentlySelectedTrack else { return }
+        if (currentlySelectedTrack.type != .recordingTrack) { return }
+        
         currentlyRecordingTrack = currentlySelectedTrack
         if (isPlaying) {
             update_current_time_with_reset_to_timeline_range()

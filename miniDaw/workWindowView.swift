@@ -185,7 +185,8 @@ struct TimelineWindowView: View {
                             RegionView(
                                 track: track,
                                 oneSecondLength: oneSecondLength,
-                                maxLength: timeline_width)
+                                maxLength: timeline_width,
+                                model: model)
                         }
                     }.offset(y: rulerHeight + 1)
                     
@@ -401,6 +402,7 @@ struct RegionView: View {
     let track: Track
     let oneSecondLength: CGFloat
     let maxLength: CGFloat
+    let model: AudioEngineModel
     
     var body: some View {
         let audio_length = max(track.AudioLengthSeconds * oneSecondLength, 1e-5)
@@ -408,20 +410,33 @@ struct RegionView: View {
         let startOffset: CGFloat = track.AudioStartSeconds * oneSecondLength
         let visibleRatio = (audio_length < maxLength) ? 1.0 : maxLength / audio_length
         
-        ZStack() {
+        ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 5)
                 .fill(track.type == .backingTrack ? Color.green :  Color.red)
                 .frame(width: length, height: 40)
                 .shadow(radius: 3)
+                .offset(x: startOffset)
+            
+            if model.currentlyRecordingTrack === track {
+                let rec_audio_len = Double(model.currTime - model.RecordStartTime) / model.EngineSampleRate
+                let rec_length: CGFloat = max(rec_audio_len * oneSecondLength, 1e-5)
+                let rec_start_offset: CGFloat = Double(model.RecordStartTime) * oneSecondLength / model.EngineSampleRate
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color.red.mix(with: Color.black, by: 0.2))
+                    .frame(width: rec_length, height: 40)
+                    .shadow(radius: 3)
+                    .offset(x: rec_start_offset)
+            }
             
             AudioWaveformView(
                 audio_file: nil,                        // todo: remove possible init argument
                 audio_buffer: track.AudioBuffer,
                 audio_buffer_counter: track.RecordBufferCounter,
                 visibleRatio: visibleRatio.isNaN ? 1.0 : visibleRatio
-            ).frame(width: length, height: 40)
+            )
+            .frame(width: length, height: 40)
+            .offset(x: startOffset)
         }
-        .offset(x: startOffset)
     }
 }
 
