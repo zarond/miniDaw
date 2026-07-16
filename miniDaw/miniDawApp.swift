@@ -80,8 +80,6 @@ class AudioEngineModel {
         }
     }
     
-    private var nextLoopPlanned : Bool = false
-    
     var TimeSignatureHigh: Int = 4 {
         didSet {
             recalculate_timeline_length()
@@ -420,15 +418,15 @@ class AudioEngineModel {
     
     func stop() {
         nextBeatNumber = 0
-        nextLoopPlanned = false
+            
+        if (isRecording) {
+            stop_recording()
+        }
         
         update_current_time_with_reset_to_timeline_range()
         update_current_time_seconds()
         
         isPlaying = false
-        if (isRecording) {
-            stop_recording()
-        }
     }
     
     func start_recording(){
@@ -469,7 +467,6 @@ class AudioEngineModel {
         startTime = now.sampleTime
         currTime = AVAudioFramePosition(0)
         currTimeSeconds = 0.0
-        nextLoopPlanned = false
         
         if (metronomeOn && isPlaying) {
             _ = scheduleMetronomeTick(play_now: true)
