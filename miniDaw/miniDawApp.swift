@@ -88,8 +88,8 @@ class AudioEngineModel {
     }
     
     private var engine = AVAudioEngine()
-    private let metronomePlayer = AVAudioPlayerNode()
-
+    private var metronomeSourceNode: AVAudioSourceNode? = nil
+    
     var isPlayerReady: Bool = false
     
     var EngineSampleRate : Double = 44100.0
@@ -122,7 +122,6 @@ class AudioEngineModel {
         recalculate_samples_per_beat()
         reset_to_begining()
         setupAnimation()
-        metronomePlayer.play()
     }
     
     deinit {
@@ -185,8 +184,6 @@ class AudioEngineModel {
     }
     
     private func configureEngine() {
-        engine.attach(metronomePlayer)
-        
         inputNode = engine.inputNode
         if let inputNode {
             stereoInputIsAvailable = (inputNode.inputFormat(forBus: 0).channelCount >= 2)
@@ -206,14 +203,21 @@ class AudioEngineModel {
             print("Error: output sample rate does not match input sample rate.")
         }
 
-        engine.connect(
-            metronomePlayer,
-            to: engine.mainMixerNode,
-            format: outputFormat)
-
-        engine.prepare()
-        
         EngineSampleRate = outputFormat.sampleRate
+        
+        installMetronomeSource()
+        
+        if let metronomeSourceNode {
+            engine.attach(metronomeSourceNode)
+            
+            engine.connect(
+                metronomeSourceNode,
+                to: engine.mainMixerNode,
+                format: outputFormat
+            )
+        }
+        
+        engine.prepare()
         
         configureLowLatencyBuffer(bufferSize: IOBufferSize)
 
@@ -298,7 +302,6 @@ class AudioEngineModel {
             stop()
         }
         displayLink.invalidate()
-        metronomePlayer.stop()
         
         inputNode?.removeTap(onBus: 0)
         //engine.stop() // TODO: properly stop engine
@@ -336,7 +339,6 @@ class AudioEngineModel {
         
         installInputTap(bufferSize: newSize)
         
-        metronomePlayer.play()
         setupAnimation()
         
         recalculate_timeline_length()
@@ -374,45 +376,6 @@ class AudioEngineModel {
         
         nextBeatNumber = calcNextBeatNumber
         nextBeatTime = AVAudioFramePosition(Double(nextBeatNumber) * samplesPerBeat)
-        
-        var when: AVAudioTime? = nil
-        if !play_now {
-            let engineWhen = AVAudioTime(sampleTime: startTime + nextBeatTime, atRate: EngineSampleRate)
-            when = metronomePlayer.playerTime(forNodeTime: engineWhen)
-        }
-        
-        let strongBeat = nextBeatNumber.isMultiple(of: TimeSignatureHigh)
-        let audio_buffer = strongBeat ? metronomeHighAudioBuffer : metronomeAudioBuffer
-#if DEBUG
-        print("time until beat: ", nextBeatNumber," - ", Double(nextBeatTime - currTime) / EngineSampleRate)
-        if let when {
-            if let nodeRenderTime = metronomePlayer.lastRenderTime,
-               let playerNow = metronomePlayer.playerTime(forNodeTime: nodeRenderTime),
-               when.isSampleTimeValid, playerNow.isSampleTimeValid {
-                if when.sampleTime <= playerNow.sampleTime {
-                    print("mapped player time is in the past (\(when.sampleTime) <= \(playerNow.sampleTime));")
-                }
-                let engineWhen = AVAudioTime(sampleTime: startTime + nextBeatTime, atRate: EngineSampleRate)
-                if engineWhen.sampleTime <= nodeRenderTime.sampleTime {
-                    print("mapped node time is in the past (\(engineWhen.sampleTime) <= \(nodeRenderTime.sampleTime));")
-                }
-            }
-        }
-        print("tick 1")
-        metronomePlayer.scheduleBuffer(audio_buffer, at: when, completionCallbackType : .dataPlayedBack)
-        { callbacktype in
-            print("tick 2")
-            let debug_now = self.debugClock.now
-            if let last_moment = self.debugPrevMoment {
-                let elapsedTime = (debug_now - last_moment) * Double(self.bpm) / 60.0
-                let secondsAsDouble = Double(elapsedTime.components.seconds) + (Double(elapsedTime.components.attoseconds) / 1e18)
-                print("beetwen clicks: \(secondsAsDouble) in bpm measurement")
-            }
-            self.debugPrevMoment = debug_now
-        }
-#else
-        metronomePlayer.scheduleBuffer(audio_buffer, at: when)
-#endif
         return true
     }
     
@@ -441,11 +404,8 @@ class AudioEngineModel {
             if isRecording && looping && outside {
                 stop_recording(at_loop_end: true)
             }
-            if (metronomeOn || (preCount && isRecording && preCountBeats <= TimeSignatureHigh)) {
-                let click_scheduled = scheduleMetronomeTick()
-                if (click_scheduled) {
-                    preCountBeats += 1
-                }
+            if (looping && outside) {
+                _ = scheduleMetronomeTick()
             }
             update_current_time_seconds()
             if (looping) {
@@ -457,7 +417,6 @@ class AudioEngineModel {
     }
     
     func releaseResources() {
-        metronomePlayer.stop()
         StopTracks()
         inputNode?.removeTap(onBus: 0)
         engine.stop()
@@ -482,8 +441,8 @@ class AudioEngineModel {
         
         update_current_time_seconds()
         
-        if (isOnBeat() && (metronomeOn || (preCount && start_recording))) {
-            let click_scheduled = scheduleMetronomeTick(play_now: true)
+        if metronomeOn || (preCount && start_recording) {
+            let click_scheduled = scheduleMetronomeTick(play_now: isOnBeat())
             if (click_scheduled) {
                 preCountBeats += 1
             }
@@ -494,8 +453,6 @@ class AudioEngineModel {
     }
     
     func stop() {
-        metronomePlayer.stop()
-        metronomePlayer.play()
         StopTracks()
         nextBeatNumber = 0
         nextLoopPlanned = false
@@ -563,12 +520,8 @@ class AudioEngineModel {
         currTimeSeconds = 0.0
         nextLoopPlanned = false
         
-        if (metronomeOn) {
-            metronomePlayer.stop()
-            metronomePlayer.play()
-            if (isPlaying && isOnBeat()) {
-                _ = scheduleMetronomeTick(play_now: true)
-            }
+        if (metronomeOn && isPlaying) {
+            _ = scheduleMetronomeTick(play_now: true)
         }
         if (isPlaying) {
             StopTracks()
@@ -763,6 +716,91 @@ class AudioEngineModel {
         
         inputNode.removeTap(onBus: 0)
         installInputTap(bufferSize: IOBufferSize)
+    }
+    
+    private func installMetronomeSource() {
+        metronomeSourceNode = AVAudioSourceNode { [weak self] isSilence, timestamp, frameCount, outputData -> OSStatus in
+            guard let self = self else { isSilence.pointee = true; return noErr }
+            let ablPointer = UnsafeMutableAudioBufferListPointer(outputData)
+            
+            // If metronome is off or not playing, do nothing further
+            if !self.isPlaying || !self.metronomeOn && !(self.preCount && self.isRecording && self.preCountBeats <= self.TimeSignatureHigh) {
+                isSilence.pointee = true
+                return noErr
+            }
+            
+            let ts = timestamp.pointee
+            guard ts.mFlags.contains(.sampleTimeValid) else {
+                isSilence.pointee = true
+                return noErr
+            }
+            
+            // Determine which metronome buffer to use: strong beat or regular
+            let strongBeat = self.nextBeatNumber.isMultiple(of: self.TimeSignatureHigh)
+            let audio_buffer = strongBeat ? self.metronomeHighAudioBuffer : self.metronomeAudioBuffer
+            
+            let currentBlockStartSample = AVAudioFramePosition(ts.mSampleTime) - self.startTime
+            
+            // Calculate the frame index within this block where the metronome click should start
+            let startFrameInBlock = Int(self.nextBeatTime - currentBlockStartSample)
+            
+            // Compute copy parameters allowing partial overlap if startFrameInBlock < 0
+            
+            let clickStartInBuffer = max(startFrameInBlock, 0)
+            let clickStartInAudio = max(-startFrameInBlock, 0)
+            let audioBufferFrameLength = Int(audio_buffer.frameLength)
+            
+            let outputChannelCount = ablPointer.count
+            let audioBufferChannelCount = Int(audio_buffer.format.channelCount)
+            
+            let framesLeftInBlock = Int(frameCount) - clickStartInBuffer
+            let framesLeftInAudio = audioBufferFrameLength - clickStartInAudio
+            let framesToCopy = min(framesLeftInBlock, framesLeftInAudio)
+            
+            if (framesLeftInAudio <= 0) {
+                // Advance nextBeatTime and nextBeatNumber to schedule next beat
+                self.nextBeatTime += AVAudioFramePosition(self.samplesPerBeat)
+                self.nextBeatNumber += 1
+                self.preCountBeats += 1
+            }
+            
+            // If no frames to copy, return early
+            if framesToCopy <= 0 {
+                isSilence.pointee = true
+                return noErr
+            }
+            isSilence.pointee = false
+            
+            // Clear the output buffer initially
+            for buffer in ablPointer {
+                if let data = buffer.mData {
+                    memset(data, 0, Int(buffer.mDataByteSize))
+                }
+            }
+            
+            // Copy metronome samples into output for each channel starting at clickStartInBuffer in output
+            // and clickStartInAudio in audio buffer
+            
+            guard let audioBufferChannels = audio_buffer.floatChannelData else { return noErr }
+            
+            for channelIndex in 0..<outputChannelCount {
+                let outputBuffer = ablPointer[channelIndex]
+                guard let outputData = outputBuffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+                
+                // Use modulo to repeat first channel if output has more channels than audio buffer
+                let sourceChannelIndex = channelIndex < audioBufferChannelCount ? channelIndex : 0
+                let sourceData = audioBufferChannels[sourceChannelIndex]
+                
+                // Copy samples from audio_buffer to output buffer
+                for frame in 0..<framesToCopy {
+                    let outputFrameIndex = clickStartInBuffer + frame
+                    let sourceFrameIndex = clickStartInAudio + frame
+                    outputData[outputFrameIndex] = sourceData[sourceFrameIndex]
+                }
+            }
+            
+            return noErr
+        }
     }
 }
 
