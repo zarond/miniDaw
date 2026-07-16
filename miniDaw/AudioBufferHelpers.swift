@@ -184,3 +184,26 @@ func cropped_buffer(from buffer: AVAudioPCMBuffer, format: AVAudioFormat, start_
     }
     return segmentBuffer
 }
+
+func loadAudioFileToBuffer(file: AVAudioFile, outputFormat: AVAudioFormat) -> AVAudioPCMBuffer? {
+    // Create a format converter to translate file format -> hardware format
+    let converter = AVAudioConverter(from: file.processingFormat, to: outputFormat)
+    
+    let file_length_seconds = Double(file.length) / file.processingFormat.sampleRate
+    
+    // Allocate a buffer matching the hardware format
+    let inputFileFrameCount = AVAudioFrameCount(file.length)
+    let outputFileFrameCount = AVAudioFrameCount(file_length_seconds * outputFormat.sampleRate)
+    guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: inputFileFrameCount),
+          let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: outputFileFrameCount) else { return nil }
+    
+    try? file.read(into: inputBuffer)
+    
+    // Convert the audio data permanently into the hardware sample rate
+    var error: NSError?
+    converter?.convert(to: outputBuffer, error: &error) { inNumPackets, outStatus in
+        outStatus.pointee = .haveData
+        return inputBuffer
+    }
+    return outputBuffer
+}

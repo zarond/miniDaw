@@ -446,7 +446,7 @@ struct EQSingleBandControl: View {
 }
 
 #Preview {
-    var model = AudioEngineModel()
+    let model = AudioEngineModel()
     model.Tracks = [
         Track(name: "Track 1", type: .backingTrack),
     ]

@@ -305,7 +305,7 @@ struct VolumeSlider: View {
 }
 
 #Preview {
-    var model = AudioEngineModel()
+    let model = AudioEngineModel()
     model.Tracks = [
         Track(name: "Track 1", type: .backingTrack),
         Track(name: "Track 2", type: .backingTrack)

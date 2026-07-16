@@ -72,7 +72,19 @@ class AudioEngineModel {
     var metronomeOn: Bool = true
     var preCount: Bool = false
     private var preCountBeats: Int = 0
-    var looping: Bool = false
+    var looping: Bool = false {
+        didSet {
+            if !looping {
+                guard let now = engine.outputNode.lastRenderTime else { return }
+                currTime = now.sampleTime - startTime
+                if currTime >= TimelineLength {
+                    currTime %= TimelineLength
+                    startTime = now.sampleTime - currTime
+                    _ = scheduleMetronomeTick(play_now: true)
+                }
+            }
+        }
+    }
     
     private var nextLoopPlanned : Bool = false
     
@@ -130,8 +142,8 @@ class AudioEngineModel {
     
     private func setupAudio() {
         configureEngine()
-        loadAudioFileToBuffer(file_name: "metronome_bip", file_extension: "wav", outputBufferRef: &metronomeAudioBuffer)
-        loadAudioFileToBuffer(file_name: "metronome_bip_high", file_extension: "wav", outputBufferRef: &metronomeHighAudioBuffer)
+        metronomeAudioBuffer = loadAudioFileToBufferByName(file_name: "metronome_bip", file_extension: "wav") ?? AVAudioPCMBuffer()
+        metronomeHighAudioBuffer = loadAudioFileToBufferByName(file_name: "metronome_bip_high", file_extension: "wav") ?? AVAudioPCMBuffer()
         Track.engine = self.engine
         Track.model = self
         create_recording_track()
@@ -237,37 +249,18 @@ class AudioEngineModel {
         return AVAudioFormat(settings: settings) ?? sourceFormat
     }
     
-    private func loadAudioFileToBuffer(file_name: String, file_extension: String, outputBufferRef: inout AVAudioPCMBuffer) {
+    private func loadAudioFileToBufferByName(file_name: String, file_extension: String) -> AVAudioPCMBuffer? {
         guard let url = Bundle.main.url(forResource: file_name, withExtension: file_extension) else {
             print("Audio file '\(file_name)' not found in bundle.")
-            return
+            return nil
         }
         do {
             let file = try AVAudioFile(forReading: url)
-            
-            // Create a format converter to translate file format -> hardware format
-            let converter = AVAudioConverter(from: file.processingFormat, to: outputFormat)
-            
-            let file_length_seconds = Double(file.length) / file.processingFormat.sampleRate
-            
-            // Allocate a buffer matching the hardware format
-            let inputFileFrameCount = AVAudioFrameCount(file.length)
-            let outputFileFrameCount = AVAudioFrameCount(file_length_seconds * outputFormat.sampleRate)
-            guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: inputFileFrameCount),
-                  let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: outputFileFrameCount) else { return }
-            
-            try? file.read(into: inputBuffer)
-            
-            // Convert the audio data permanently into the hardware sample rate
-            var error: NSError?
-            converter?.convert(to: outputBuffer, error: &error) { inNumPackets, outStatus in
-                outStatus.pointee = .haveData
-                return inputBuffer
-            }
-            outputBufferRef = outputBuffer
+            return loadAudioFileToBuffer(file: file, outputFormat: outputFormat)
         } catch {
             print("Error reading audio file: \(error)")
         }
+        return nil
     }
     
     private func configureLowLatencyBuffer(bufferSize: UInt32 = 512) {
@@ -404,13 +397,8 @@ class AudioEngineModel {
             if isRecording && looping && outside {
                 stop_recording(at_loop_end: true)
             }
-            if (looping && outside) {
-                _ = scheduleMetronomeTick()
-            }
             update_current_time_seconds()
-            if (looping) {
-                setupNextLoop() // try to set up next loop if near the end of the timeline
-            } else if (outside) {
+            if !looping && outside {
                 stop()
             }
         }
@@ -429,7 +417,7 @@ class AudioEngineModel {
         
         preCountBeats = 0
         
-        if (currTime > TimelineLength) {
+        if (currTime >= TimelineLength) {
             reset_to_begining()
         } else {
             guard let now = engine.outputNode.lastRenderTime else { return }
@@ -463,20 +451,6 @@ class AudioEngineModel {
         isPlaying = false
         if (isRecording) {
             stop_recording()
-        }
-    }
-    
-    private func setupNextLoop() {
-        if (nextLoopPlanned) {
-            if (currTime < TimelineLength / 4) {
-                nextLoopPlanned = false
-            }
-            return
-        }
-        if (currTime > TimelineLength * 3 / 4) {
-            nextLoopPlanned = true
-            
-            ScheduleTracks( prepare_next_loop: true )
         }
     }
     
@@ -564,16 +538,13 @@ class AudioEngineModel {
     func update_current_time() -> Bool {
         guard let now = engine.outputNode.lastRenderTime else { return false }
         currTime = now.sampleTime - startTime
-        let outside_limit = (currTime > TimelineLength)
-        if (looping && outside_limit) {
-            currTime -= TimelineLength
-            startTime += TimelineLength
-        }
+        let outside_limit = (currTime >= TimelineLength)
         return outside_limit
     }
     
     func update_current_time_seconds() { // for visual feedback
-        currTimeSeconds = Double(currTime) / EngineSampleRate
+        let time = Double(currTime) / EngineSampleRate
+        currTimeSeconds = isPlaying && looping ? time.truncatingRemainder(dividingBy: TimelineLengthSeconds) : time
     }
     
     private func isOnBeat() -> Bool {

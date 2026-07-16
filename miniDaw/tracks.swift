@@ -43,13 +43,11 @@ class Track: Identifiable {
     let Player = AVAudioPlayerNode()
     let preFXMixer = AVAudioMixerNode()
     
-    var BTAudioFile : AVAudioFile?
-    var BTAudioLengthSamples = AVAudioFramePosition()
     var TrackFormat = AVAudioFormat()
     var AudioLengthSeconds : Double = 4.0
     var AudioStartSeconds : Double = 0.0
     
-    var RecordBuffer : AVAudioPCMBuffer?
+    var AudioBuffer : AVAudioPCMBuffer?
     var RecordBufferCounter = 0
     
     var RegionStartTime = AVAudioFramePosition(0)    // relative time on timeline
@@ -66,23 +64,22 @@ class Track: Identifiable {
         
         effectsManager = AudioEffectsManager(model: model, engine: engine)
         
-        if let audioFile = audioFile {
-            BTAudioFile = audioFile
-            BTAudioLengthSamples = audioFile.length
-            TrackFormat = audioFile.fileFormat
-            RegionStartTime = 0                               // audio files are put at the beginning
-            AudioLengthSeconds = Double(BTAudioLengthSamples) / TrackFormat.sampleRate
-            RegionStopTime = AVAudioFramePosition(AudioLengthSeconds * (Track.model?.EngineSampleRate ?? 0))
-        }
-        
         let outputFormat = Track.model!.outputFormat
+        TrackFormat = outputFormat
+        
+        if let audioFile = audioFile {
+            AudioBuffer = loadAudioFileToBuffer(file: audioFile, outputFormat: TrackFormat)
+            
+            RegionStartTime = 0                                         // audio files are put at the beginning
+            AudioLengthSeconds = Double(AudioBuffer?.frameLength ?? 0) / TrackFormat.sampleRate
+            RegionStopTime = Int64(AudioBuffer?.frameLength ?? 0)
+        }
         
         engine.attach(Player)
         engine.attach(preFXMixer)
         
         if (type == .recordingTrack) {
             AudioLengthSeconds = 0.0
-            TrackFormat = outputFormat
         }
         engine.connect(
             Player,
@@ -110,47 +107,22 @@ class Track: Identifiable {
     
     func schedule(prepare_next_loop : Bool = false) {
         guard let model = Track.model else { return }
-        
-        switch type {
-        case .backingTrack:
-            guard let file = BTAudioFile else { return }
-            schedule_backing_track(file: file, model: model, prepare_next_loop : prepare_next_loop)
-        case .recordingTrack:
-            schedule_recording_track(model: model, prepare_next_loop : prepare_next_loop)
-        }
+        schedule_audio_track(model: model, prepare_next_loop : prepare_next_loop)
     }
     
-    private func schedule_backing_track(file: AVAudioFile, model: AudioEngineModel,  prepare_next_loop : Bool = false) {
-        if (prepare_next_loop || model.currTime < RegionStartTime) {
-            let sampleTime = model.startTime + RegionStartTime + (prepare_next_loop ? model.TimelineLength : 0)
-            let engineWhen = AVAudioTime(sampleTime: sampleTime, atRate: model.EngineSampleRate)
-            let when = Player.playerTime(forNodeTime: engineWhen)
-            let number_frames = AVAudioFrameCount(AVAudioFramePosition(model.TimelineLengthSeconds * TrackFormat.sampleRate))
-            Player.scheduleSegment(file, startingFrame: 0, frameCount: number_frames, at: when)
-        } else if (model.currTime < RegionStopTime){
-            let start_frame_engine = model.currTime - RegionStartTime
-            let start_frame_seconds = Double(start_frame_engine) / model.EngineSampleRate
-            let start_frame = AVAudioFramePosition(start_frame_seconds * TrackFormat.sampleRate)
-            let number_frames = AVAudioFrameCount(
-                max(AVAudioFramePosition(model.TimelineLengthSeconds * TrackFormat.sampleRate) - start_frame, 0)
-            )
-            Player.scheduleSegment(file, startingFrame: start_frame, frameCount: number_frames, at: nil)
-        }
-    }
-    
-    private func schedule_recording_track(model: AudioEngineModel,  prepare_next_loop : Bool = false) {
-        guard let RecordBuffer else { return }
+    private func schedule_audio_track(model: AudioEngineModel,  prepare_next_loop : Bool = false) {
+        guard let AudioBuffer else { return }
         if (prepare_next_loop || model.currTime < RegionStartTime) {
             let sampleTime = model.startTime + RegionStartTime + (prepare_next_loop ? model.TimelineLength : 0)
             let engineWhen = AVAudioTime(sampleTime: sampleTime, atRate: model.EngineSampleRate)
             let when = Player.playerTime(forNodeTime: engineWhen)
             let number_frames = AVAudioFrameCount(max(min(RegionStopTime, model.TimelineLength) - RegionStartTime, 0))
-            let segmentBuffer = cropped_buffer(from: RecordBuffer, format: TrackFormat, start_frame: 0, number_frames: number_frames) ?? AVAudioPCMBuffer()
+            let segmentBuffer = cropped_buffer(from: AudioBuffer, format: TrackFormat, start_frame: 0, number_frames: number_frames) ?? AVAudioPCMBuffer()
             Player.scheduleBuffer(segmentBuffer, at: when)
         } else if (model.currTime < RegionStopTime) {
             let start_frame = model.currTime - RegionStartTime
             let number_frames = AVAudioFrameCount(max(min(RegionStopTime, model.TimelineLength) - RegionStartTime - start_frame, 0))
-            let segmentBuffer = cropped_buffer(from: RecordBuffer, format: TrackFormat, start_frame: start_frame, number_frames: number_frames) ?? AVAudioPCMBuffer()
+            let segmentBuffer = cropped_buffer(from: AudioBuffer, format: TrackFormat, start_frame: start_frame, number_frames: number_frames) ?? AVAudioPCMBuffer()
             Player.scheduleBuffer(segmentBuffer)
         }
     }
@@ -163,9 +135,9 @@ class Track: Identifiable {
         if (type == .backingTrack) { return }
         if (RecordStartTime >= RecordStopTime) { return }
         
-        if (RecordBuffer == nil) {
+        if (AudioBuffer == nil) {
             let number_frames = AVAudioFrameCount(max(RecordStopTime - RecordStartTime, 0))
-            RecordBuffer = cropped_buffer(from: buffer, format: TrackFormat, start_frame: RecordStartTime, number_frames: number_frames, allow_skip_crop: false)
+            AudioBuffer = cropped_buffer(from: buffer, format: TrackFormat, start_frame: RecordStartTime, number_frames: number_frames, allow_skip_crop: false)
             
             RegionStartTime = RecordStartTime
             RegionStopTime = RecordStopTime
@@ -176,7 +148,7 @@ class Track: Identifiable {
             if (RegionStartTime <= RecordStartTime && RecordStopTime <= RegionStopTime) {
                 let number_frames = RecordStopTime - RecordStartTime
                 let offset = RecordStartTime - RegionStartTime
-                copyBuffer(from: buffer, to: RecordBuffer!, atOffset: offset, startFrameSrc: RecordStartTime,
+                copyBuffer(from: buffer, to: AudioBuffer!, atOffset: offset, startFrameSrc: RecordStartTime,
                            frameNumberSrc: AVAudioFrameCount(number_frames))
             } else {
                 let number_frames_total = newRegionStopTime - newRegionStartTime
@@ -185,11 +157,11 @@ class Track: Identifiable {
                 let number_frames_B = RecordStopTime - RecordStartTime
                 let offset_A = RegionStartTime - newRegionStartTime
                 let offset_B = RecordStartTime - newRegionStartTime
-                copyBuffer(from: RecordBuffer!, to: newRecordBuffer, atOffset : offset_A, startFrameSrc: 0,
+                copyBuffer(from: AudioBuffer!, to: newRecordBuffer, atOffset : offset_A, startFrameSrc: 0,
                            frameNumberSrc: AVAudioFrameCount(number_frames_A))
                 copyBuffer(from: buffer, to: newRecordBuffer, atOffset : offset_B, startFrameSrc: RecordStartTime,
                            frameNumberSrc: AVAudioFrameCount(number_frames_B))
-                RecordBuffer = newRecordBuffer
+                AudioBuffer = newRecordBuffer
             }
             RegionStartTime = newRegionStartTime
             RegionStopTime = newRegionStopTime

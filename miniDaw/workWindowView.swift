@@ -415,7 +415,7 @@ struct RegionView: View {
                 .shadow(radius: 3)
             
             AudioWaveformView(
-                audio_file: track.BTAudioFile,
+                audio_file: nil,                        // todo: remove possible init argument
                 audio_buffer: track.RecordBuffer,
                 audio_buffer_counter: track.RecordBufferCounter,
                 visibleRatio: visibleRatio.isNaN ? 1.0 : visibleRatio
@@ -573,7 +573,7 @@ struct Knob: View {
 }
 
 #Preview {
-    var model = AudioEngineModel()
+    let model = AudioEngineModel()
     model.Tracks = [
         Track(name: "Track 1", type: .backingTrack),
         Track(name: "Track 2", type: .backingTrack),
