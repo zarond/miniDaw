@@ -23,16 +23,25 @@ class Track: Identifiable {
     var volume: Float = 1.0 {
         didSet {
             PlayerSourceNode?.volume = mute ? 0.0 : volume
+            if monitorOn {
+                Track.model?.inputNode?.volume = mute ? 0.0 : volume
+            }
         }
     }
     var mute: Bool = false {
         didSet {
             PlayerSourceNode?.volume = mute ? 0.0 : volume
+            if monitorOn {
+                Track.model?.inputNode?.volume = mute ? 0.0 : volume
+            }
         }
     }
     var pan: Float = 0.0 {
         didSet {
             PlayerSourceNode?.pan = pan
+            if monitorOn {
+                Track.model?.inputNode?.pan = pan
+            }
         }
     }
     private(set) var monitorOn: Bool = false
@@ -155,6 +164,9 @@ class Track: Identifiable {
         let inputFormat = model.inputFormat
         engine.connect(model.inputNode!, to: preFXMixer, format: inputFormat)
 
+        model.inputNode?.volume = mute ? 0.0 : volume
+        model.inputNode?.pan = pan
+        
         monitorOn = true
     }
     
@@ -165,6 +177,9 @@ class Track: Identifiable {
         guard let model = Track.model else { return }
 
         engine.disconnectNodeOutput(model.inputNode!)
+        
+        model.inputNode?.volume = 1.0
+        model.inputNode?.pan = 0.0
 
         monitorOn = false
     }
