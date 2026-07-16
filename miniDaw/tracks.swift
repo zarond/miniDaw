@@ -44,7 +44,7 @@ class Track: Identifiable {
     let preFXMixer = AVAudioMixerNode()
     
     var TrackFormat = AVAudioFormat()
-    var AudioLengthSeconds : Double = 4.0
+    var AudioLengthSeconds : Double = 0.0
     var AudioStartSeconds : Double = 0.0
     
     var AudioBuffer : AVAudioPCMBuffer?
@@ -83,9 +83,6 @@ class Track: Identifiable {
         
         engine.attach(preFXMixer)
         
-        if (type == .recordingTrack) {
-            AudioLengthSeconds = 0.0
-        }
         if let PlayerSourceNode {
             engine.connect(
                 PlayerSourceNode,

@@ -310,5 +310,7 @@ struct VolumeSlider: View {
         Track(name: "Track 1", type: .backingTrack),
         Track(name: "Track 2", type: .backingTrack)
     ]
+    model.Tracks[0].AudioLengthSeconds = 4
+    model.Tracks[1].AudioLengthSeconds = 8
     return ContentView().environment(model)
 }

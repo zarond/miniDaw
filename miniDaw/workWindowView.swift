@@ -594,6 +594,9 @@ struct Knob: View {
         Track(name: "Track 2", type: .backingTrack),
         Track(name: "Track 3", type: .recordingTrack)
     ]
+    model.Tracks[0].AudioLengthSeconds = 4
+    model.Tracks[1].AudioLengthSeconds = 8
+    model.Tracks[2].AudioLengthSeconds = 6
     return WorkWindowView().environment(model)
 }
 

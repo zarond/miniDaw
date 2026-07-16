@@ -31,6 +31,8 @@ struct TrackOptionsView: View {
                 
                 EditableNameTextField(name: $bindableTrack.name)
                 
+                ChangeTypeButton(type: $bindableTrack.type)
+                
                 Text("Volume:")
                     .bold()
                 
@@ -79,6 +81,31 @@ struct EffectsOptions: View {
     }
 }
 
+struct ChangeTypeButton: View {
+    @Binding var type: Track.TrackType
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("Type:")
+                .bold()
+            Text(type == .backingTrack ? "Backing Track" : "Recording Track")
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button {
+                // Toggle between backing and recording
+                if type == .backingTrack {
+                    type = .recordingTrack
+                } else {
+                    type = .backingTrack
+                }
+            } label: {
+                Label("Change", systemImage: "arrow.2.squarepath")
+                    .labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+}
+
 #Preview {
     let model = AudioEngineModel()
     model.Tracks = [
@@ -87,3 +114,4 @@ struct EffectsOptions: View {
     model.currentlySelectedTrack = model.Tracks[0]
     return InspectorPanelView().environment(model)
 }
+
