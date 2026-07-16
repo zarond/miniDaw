@@ -185,11 +185,11 @@ class Track: Identifiable {
         PlayerSourceNode = AVAudioSourceNode { [weak self] isSilence, timestamp, frameCount, outputData -> OSStatus in
             guard let self = self, let model = Track.model, let audio_buffer = self.AudioBuffer
                 else { isSilence.pointee = true; return noErr }
-            // TODO: dont play currently recording track
+            let isCurrentlyRecordingTrack : Bool = (self === model.currentlyRecordingTrack)
             
             let ablPointer = UnsafeMutableAudioBufferListPointer(outputData)
             
-            if !model.isPlaying {
+            if !model.isPlaying || isCurrentlyRecordingTrack {
                 isSilence.pointee = true
                 return noErr
             }
@@ -200,7 +200,11 @@ class Track: Identifiable {
                 return noErr
             }
             
-            let currentBlockStartSample = AVAudioFramePosition(ts.mSampleTime) - model.startTime
+            var currentBlockStartSample = (AVAudioFramePosition(ts.mSampleTime) - model.startTime)
+            // todo: this is not a perfect looping, there is a cutoff (inaudible)
+            if (model.looping) {
+                currentBlockStartSample %= model.TimelineLength
+            }
             
             // Calculate the frame index within this block where the audio region should start
             let startFrameInBlock = Int(self.RegionStartTime - currentBlockStartSample)

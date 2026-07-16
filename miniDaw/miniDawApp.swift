@@ -75,13 +75,7 @@ class AudioEngineModel {
     var looping: Bool = false {
         didSet {
             if !looping {
-                guard let now = engine.outputNode.lastRenderTime else { return }
-                currTime = now.sampleTime - startTime
-                if currTime >= TimelineLength {
-                    currTime %= TimelineLength
-                    startTime = now.sampleTime - currTime
-                    _ = scheduleMetronomeTick(play_now: true)
-                }
+                update_current_time_with_reset_to_timeline_range()
             }
         }
     }
@@ -428,7 +422,7 @@ class AudioEngineModel {
         nextBeatNumber = 0
         nextLoopPlanned = false
         
-        _ = update_current_time()
+        update_current_time_with_reset_to_timeline_range()
         update_current_time_seconds()
         
         isPlaying = false
@@ -441,7 +435,7 @@ class AudioEngineModel {
         guard !isRecording else { return }
         currentlyRecordingTrack = currentlySelectedTrack
         if (isPlaying) {
-            _ = update_current_time()
+            update_current_time_with_reset_to_timeline_range()
         }
         let already_playing = isPlaying
         if (!already_playing) {
@@ -518,6 +512,16 @@ class AudioEngineModel {
         currTime = now.sampleTime - startTime
         let outside_limit = (currTime >= TimelineLength)
         return outside_limit
+    }
+    
+    func update_current_time_with_reset_to_timeline_range() {
+        guard let now = engine.outputNode.lastRenderTime else { return }
+        currTime = now.sampleTime - startTime
+        if currTime >= TimelineLength {
+            currTime %= TimelineLength
+            startTime = now.sampleTime - currTime
+            _ = scheduleMetronomeTick(play_now: true)
+        }
     }
     
     func update_current_time_seconds() { // for visual feedback
