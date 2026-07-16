@@ -372,18 +372,6 @@ class AudioEngineModel {
         return true
     }
     
-    func PlayTracks(){
-        Tracks.forEach { $0.play() }
-    }
-    
-    func StopTracks(){
-        Tracks.forEach { $0.stop() }
-    }
-    
-    func ScheduleTracks(prepare_next_loop : Bool = false){
-        Tracks.filter { $0 !== currentlyRecordingTrack || $0.type == .backingTrack}.forEach { $0.schedule(prepare_next_loop: prepare_next_loop) }
-    }
-    
     func setupAnimation() {
         if let mainScreen = NSScreen.main {
             displayLink = mainScreen.displayLink(target: self, selector: #selector(updateAnimation))
@@ -405,7 +393,6 @@ class AudioEngineModel {
     }
     
     func releaseResources() {
-        StopTracks()
         inputNode?.removeTap(onBus: 0)
         engine.stop()
         displayLink.invalidate()
@@ -435,13 +422,9 @@ class AudioEngineModel {
                 preCountBeats += 1
             }
         }
-        
-        PlayTracks()
-        ScheduleTracks()
     }
     
     func stop() {
-        StopTracks()
         nextBeatNumber = 0
         nextLoopPlanned = false
         
@@ -496,11 +479,6 @@ class AudioEngineModel {
         
         if (metronomeOn && isPlaying) {
             _ = scheduleMetronomeTick(play_now: true)
-        }
-        if (isPlaying) {
-            StopTracks()
-            PlayTracks()
-            ScheduleTracks()
         }
         
         nextBeatNumber = 0

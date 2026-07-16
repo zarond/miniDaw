@@ -22,17 +22,17 @@ class Track: Identifiable {
     
     var volume: Float = 1.0 {
         didSet {
-            Player.volume = mute ? 0.0 : volume
+            PlayerSourceNode?.volume = mute ? 0.0 : volume
         }
     }
     var mute: Bool = false {
         didSet {
-            Player.volume = mute ? 0.0 : volume
+            PlayerSourceNode?.volume = mute ? 0.0 : volume
         }
     }
     var pan: Float = 0.0 {
         didSet {
-            Player.pan = pan
+            PlayerSourceNode?.pan = pan
         }
     }
     private(set) var monitorOn: Bool = false
@@ -40,7 +40,7 @@ class Track: Identifiable {
     static weak var engine : AVAudioEngine?
     static weak var model : AudioEngineModel?
     
-    let Player = AVAudioPlayerNode()
+    private var PlayerSourceNode: AVAudioSourceNode? = nil
     let preFXMixer = AVAudioMixerNode()
     
     var TrackFormat = AVAudioFormat()
@@ -75,16 +75,23 @@ class Track: Identifiable {
             RegionStopTime = Int64(AudioBuffer?.frameLength ?? 0)
         }
         
-        engine.attach(Player)
+        installPlayerSource()
+        
+        if let PlayerSourceNode {
+            engine.attach(PlayerSourceNode)
+        }
+        
         engine.attach(preFXMixer)
         
         if (type == .recordingTrack) {
             AudioLengthSeconds = 0.0
         }
-        engine.connect(
-            Player,
-            to: preFXMixer,
-            format: outputFormat)
+        if let PlayerSourceNode {
+            engine.connect(
+                PlayerSourceNode,
+                to: preFXMixer,
+                format: outputFormat)
+        }
         
         engine.connect(
             preFXMixer,
@@ -95,36 +102,6 @@ class Track: Identifiable {
     
     deinit {
         releaseResources()
-    }
-    
-    func play() {
-        Player.play()
-    }
-    
-    func stop() {
-        Player.stop()
-    }
-    
-    func schedule(prepare_next_loop : Bool = false) {
-        guard let model = Track.model else { return }
-        schedule_audio_track(model: model, prepare_next_loop : prepare_next_loop)
-    }
-    
-    private func schedule_audio_track(model: AudioEngineModel,  prepare_next_loop : Bool = false) {
-        guard let AudioBuffer else { return }
-        if (prepare_next_loop || model.currTime < RegionStartTime) {
-            let sampleTime = model.startTime + RegionStartTime + (prepare_next_loop ? model.TimelineLength : 0)
-            let engineWhen = AVAudioTime(sampleTime: sampleTime, atRate: model.EngineSampleRate)
-            let when = Player.playerTime(forNodeTime: engineWhen)
-            let number_frames = AVAudioFrameCount(max(min(RegionStopTime, model.TimelineLength) - RegionStartTime, 0))
-            let segmentBuffer = cropped_buffer(from: AudioBuffer, format: TrackFormat, start_frame: 0, number_frames: number_frames) ?? AVAudioPCMBuffer()
-            Player.scheduleBuffer(segmentBuffer, at: when)
-        } else if (model.currTime < RegionStopTime) {
-            let start_frame = model.currTime - RegionStartTime
-            let number_frames = AVAudioFrameCount(max(min(RegionStopTime, model.TimelineLength) - RegionStartTime - start_frame, 0))
-            let segmentBuffer = cropped_buffer(from: AudioBuffer, format: TrackFormat, start_frame: start_frame, number_frames: number_frames) ?? AVAudioPCMBuffer()
-            Player.scheduleBuffer(segmentBuffer)
-        }
     }
     
     func replace_recording_buffer(
@@ -197,9 +174,86 @@ class Track: Identifiable {
     
     private func releaseResources(){
         disableMonitoring()
-        Player.stop()
-        Track.engine?.disconnectNodeOutput(Player)
-        Track.engine?.detach(Player)
-        Player.reset()
+        if let PlayerSourceNode, let engine = Track.engine {
+            engine.disconnectNodeOutput(PlayerSourceNode)
+            engine.detach(PlayerSourceNode)
+            PlayerSourceNode.reset()
+        }
+    }
+    
+    private func installPlayerSource() {
+        PlayerSourceNode = AVAudioSourceNode { [weak self] isSilence, timestamp, frameCount, outputData -> OSStatus in
+            guard let self = self, let model = Track.model, let audio_buffer = self.AudioBuffer
+                else { isSilence.pointee = true; return noErr }
+            // TODO: dont play currently recording track
+            
+            let ablPointer = UnsafeMutableAudioBufferListPointer(outputData)
+            
+            if !model.isPlaying {
+                isSilence.pointee = true
+                return noErr
+            }
+            
+            let ts = timestamp.pointee
+            guard ts.mFlags.contains(.sampleTimeValid) else {
+                isSilence.pointee = true
+                return noErr
+            }
+            
+            let currentBlockStartSample = AVAudioFramePosition(ts.mSampleTime) - model.startTime
+            
+            // Calculate the frame index within this block where the audio region should start
+            let startFrameInBlock = Int(self.RegionStartTime - currentBlockStartSample)
+            
+            // Compute copy parameters allowing partial overlap if startFrameInBlock < 0
+            
+            let regionStartInBuffer = max(startFrameInBlock, 0)
+            let regionStartInAudio = max(-startFrameInBlock, 0)
+            let audioBufferFrameLength = Int(audio_buffer.frameLength)
+            
+            let outputChannelCount = ablPointer.count
+            let audioBufferChannelCount = Int(audio_buffer.format.channelCount)
+            
+            let framesLeftInBlock = Int(frameCount) - regionStartInBuffer
+            let framesLeftInAudio = audioBufferFrameLength - regionStartInAudio
+            let framesToCopy = min(framesLeftInBlock, framesLeftInAudio)
+            
+            // If no frames to copy, return early
+            if framesToCopy <= 0 {
+                isSilence.pointee = true
+                return noErr
+            }
+            isSilence.pointee = false
+            
+            // Clear the output buffer initially
+            for buffer in ablPointer {
+                if let data = buffer.mData {
+                    memset(data, 0, Int(buffer.mDataByteSize))
+                }
+            }
+            
+            // Copy audio region samples into output for each channel starting at regionStartInBuffer in output
+            // and regionStartInAudio in audio buffer
+            
+            guard let audioBufferChannels = audio_buffer.floatChannelData else { return noErr }
+            
+            for channelIndex in 0..<outputChannelCount {
+                let outputBuffer = ablPointer[channelIndex]
+                guard let outputData = outputBuffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+                
+                // Use modulo to repeat first channel if output has more channels than audio buffer
+                let sourceChannelIndex = channelIndex < audioBufferChannelCount ? channelIndex : 0
+                let sourceData = audioBufferChannels[sourceChannelIndex]
+                
+                // Copy samples from audio_buffer to output buffer
+                for frame in 0..<framesToCopy {
+                    let outputFrameIndex = regionStartInBuffer + frame
+                    let sourceFrameIndex = regionStartInAudio + frame
+                    outputData[outputFrameIndex] = sourceData[sourceFrameIndex]
+                }
+            }
+            
+            return noErr
+        }
     }
 }

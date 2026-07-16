@@ -416,7 +416,7 @@ struct RegionView: View {
             
             AudioWaveformView(
                 audio_file: nil,                        // todo: remove possible init argument
-                audio_buffer: track.RecordBuffer,
+                audio_buffer: track.AudioBuffer,
                 audio_buffer_counter: track.RecordBufferCounter,
                 visibleRatio: visibleRatio.isNaN ? 1.0 : visibleRatio
             ).frame(width: length, height: 40)
