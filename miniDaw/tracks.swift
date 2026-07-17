@@ -207,12 +207,12 @@ class Track: Identifiable {
             }
             
             let ts = timestamp.pointee
-            guard ts.mFlags.contains(.sampleTimeValid) else {
-                isSilence.pointee = true
-                return noErr
+            var ts_SampleTime: AVAudioFramePosition = model.startTime
+            if ts.mFlags.contains(.sampleTimeValid) {
+                ts_SampleTime = AVAudioFramePosition(ts.mSampleTime)
             }
             
-            var currentBlockStartSample = (AVAudioFramePosition(ts.mSampleTime) - model.startTime)
+            var currentBlockStartSample = ts_SampleTime - model.startTime
             // todo: this is not a perfect looping, there is a cutoff (inaudible)
             if (model.looping) {
                 currentBlockStartSample %= model.TimelineLength

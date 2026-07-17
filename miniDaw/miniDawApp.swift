@@ -53,10 +53,8 @@ class AudioEngineModel {
     var nextBeatTime = AVAudioFramePosition()   // relative time on timeline
     var nextBeatNumber : Int = 0
     
-    private var debugClock = ContinuousClock()
-    private var debugPrevMoment : ContinuousClock.Instant?
+    var currTimeSeconds: TimeInterval = 0 // todo: make a computed property? check performance
     
-    var currTimeSeconds: TimeInterval = 0.0
     var TimelineLengthSeconds: TimeInterval = 1.0
     
     var volume: Float = 1.0 {
@@ -96,7 +94,12 @@ class AudioEngineModel {
     
     var isPlayerReady: Bool = false
     
-    var EngineSampleRate : Double = 44100.0
+    var EngineSampleRate : Double = 44100.0 {
+        didSet {
+            invEngineSampleRate = 1 / EngineSampleRate
+        }
+    }
+    private(set) var invEngineSampleRate : Double = 1 / 44100.0
     private(set) var IOBufferSize : UInt32 = 512
     
     var metronomeAudioBuffer = AVAudioPCMBuffer()
@@ -280,7 +283,6 @@ class AudioEngineModel {
         }
     }
     
-    // TODO: Find bug thats breaking time calculations after proper restart!
     @discardableResult
     func changeBufferFrameSize(to newSize: UInt32) -> Bool {
         if isPlaying {
@@ -289,11 +291,10 @@ class AudioEngineModel {
         displayLink.invalidate()
         
         inputNode?.removeTap(onBus: 0)
-        //engine.stop() // TODO: properly stop engine
+        engine.stop()
         
         configureLowLatencyBuffer(bufferSize: newSize)
         
-        /* TODO: properly restart engine
         engine.reset()
         engine.prepare()
         do {
@@ -301,7 +302,7 @@ class AudioEngineModel {
         } catch {
             print("Failed to restart engine after buffer size change: \(error)")
             return false
-        }*/
+        }
         
         inputNode = engine.inputNode
         if let inputNode {
@@ -399,7 +400,7 @@ class AudioEngineModel {
         if (currTime >= TimelineLength) {
             reset_to_begining()
         } else {
-            guard let now = engine.outputNode.lastRenderTime else { return }
+            guard let now = metronomeSourceNode?.lastRenderTime else { return }
             if (start_recording && preCount) {
                 currTime -= AVAudioFramePosition(samplesPerBeat * Double(TimeSignatureHigh))
             }
@@ -461,7 +462,7 @@ class AudioEngineModel {
     }
     
     func reset_to_begining(){
-        guard let now = engine.outputNode.lastRenderTime else { return }
+        guard let now = metronomeSourceNode?.lastRenderTime else { return }
         
         if (isRecording) {
             stop_recording()
@@ -508,14 +509,14 @@ class AudioEngineModel {
     }
     
     func update_current_time() -> Bool {
-        guard let now = engine.outputNode.lastRenderTime else { return false }
+        guard let now = metronomeSourceNode?.lastRenderTime else { return false }
         currTime = now.sampleTime - startTime
         let outside_limit = (currTime >= TimelineLength)
         return outside_limit
     }
     
     func update_current_time_with_reset_to_timeline_range() {
-        guard let now = engine.outputNode.lastRenderTime else { return }
+        guard let now = metronomeSourceNode?.lastRenderTime else { return }
         currTime = now.sampleTime - startTime
         if currTime >= TimelineLength {
             currTime %= TimelineLength
@@ -525,7 +526,7 @@ class AudioEngineModel {
     }
     
     func update_current_time_seconds() { // for visual feedback
-        let time = Double(currTime) / EngineSampleRate
+        let time = Double(currTime) * invEngineSampleRate
         currTimeSeconds = isPlaying && looping ? time.truncatingRemainder(dividingBy: TimelineLengthSeconds) : time
     }
     
@@ -683,16 +684,16 @@ class AudioEngineModel {
             }
             
             let ts = timestamp.pointee
-            guard ts.mFlags.contains(.sampleTimeValid) else {
-                isSilence.pointee = true
-                return noErr
+            var ts_SampleTime: AVAudioFramePosition = self.startTime
+            if ts.mFlags.contains(.sampleTimeValid) {
+                ts_SampleTime = AVAudioFramePosition(ts.mSampleTime)
             }
             
             // Determine which metronome buffer to use: strong beat or regular
             let strongBeat = self.nextBeatNumber.isMultiple(of: self.TimeSignatureHigh)
             let audio_buffer = strongBeat ? self.metronomeHighAudioBuffer : self.metronomeAudioBuffer
             
-            let currentBlockStartSample = AVAudioFramePosition(ts.mSampleTime) - self.startTime
+            let currentBlockStartSample = ts_SampleTime - self.startTime
             
             // Calculate the frame index within this block where the metronome click should start
             let startFrameInBlock = Int(self.nextBeatTime - currentBlockStartSample)
@@ -754,6 +755,119 @@ class AudioEngineModel {
             
             return noErr
         }
+    }
+    
+    func Bounce(outputURL: URL) -> Bool {
+        stop()
+        reset_to_begining()
+        Tracks.filter { $0.monitorOn }.forEach { $0.disableMonitoring() }
+        
+        inputNode?.removeTap(onBus: 0)
+        engine.stop()
+        
+        let maxNumberOfFrames: AVAudioFrameCount = 4096
+
+        do {
+            try engine.enableManualRenderingMode(
+                .offline,
+                format: engine.mainMixerNode.outputFormat(forBus: 0),
+                maximumFrameCount: maxNumberOfFrames
+            )
+        } catch {
+            print("Failed to enable manual rendering mode: \(error)")
+            return false
+        }
+        
+        // Setup the output file where the bounced audio will be saved
+        // let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("bounced_output.wav")
+        let recordFormat = engine.manualRenderingFormat
+
+        guard let outputFile = try? AVAudioFile(forWriting: outputURL, settings: recordFormat.settings) else {
+            print("Could not create output file")
+            return false
+        }
+        
+        engine.prepare()
+        
+        do {
+            try engine.start()
+        } catch {
+            print("Engine failed to start: \(error)")
+            return false
+        }
+        
+        // Create a buffer matching the configuration we registered earlier
+        let buffer = AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: maxNumberOfFrames)!
+
+        // Calculate how many total frames we need to render
+        let totalFramesToRender = TimelineLength
+        var framesRendered: AVAudioFramePosition = 0
+        
+        // Manual start
+        isPlaying = true
+        currTime = 0
+        startTime = 0
+        if metronomeOn {
+            nextBeatNumber = 0
+            nextBeatTime = 0
+        }
+
+        while framesRendered < totalFramesToRender {
+            // Calculate how many frames to request in this chunk
+            let framesToRender = min(maxNumberOfFrames, AVAudioFrameCount(totalFramesToRender - framesRendered))
+            
+            do {
+                // Manually drive the engine to render the next chunk
+                let status = try engine.renderOffline(framesToRender, to: buffer)
+                
+                switch status {
+                case .success:
+                    // Write the processed buffer directly to the file
+                    try outputFile.write(from: buffer)
+                    framesRendered += AVAudioFramePosition(framesToRender)
+                    
+                case .insufficientDataFromInputNode:
+                    // Occurs if an input node has no input data; safely break or continue
+                    break
+                    
+                case .cannotDoInCurrentContext:
+                    // Occurs if the engine configuration changes during render
+                    break
+                    
+                case .error:
+                    print("An error occurred during rendering")
+                    break
+                    
+                @unknown default:
+                    break
+                }
+            } catch {
+                print("Render error: \(error)")
+                break
+            }
+        }
+        
+        stop()
+        reset_to_begining()
+
+        // Clean up and stop
+        engine.stop()
+        engine.disableManualRenderingMode()
+        
+        engine.reset()
+        engine.prepare()
+
+        print("Bounce completed! Output file saved to: \(outputURL)")
+        
+        do {
+            try engine.start()
+        } catch {
+            print("Engine failed to start: \(error)")
+        }
+        
+        installInputTap(bufferSize: IOBufferSize)
+        
+        return true
     }
 }
 

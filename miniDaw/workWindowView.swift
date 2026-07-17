@@ -418,9 +418,9 @@ struct RegionView: View {
                 .offset(x: startOffset)
             
             if model.currentlyRecordingTrack === track {
-                let rec_audio_len = Double(model.currTime - model.RecordStartTime) / model.EngineSampleRate
+                let rec_audio_len = Double(model.currTime - model.RecordStartTime) * model.invEngineSampleRate
                 let rec_length: CGFloat = max(rec_audio_len * oneSecondLength, 1e-5)
-                let rec_start_offset: CGFloat = Double(model.RecordStartTime) * oneSecondLength / model.EngineSampleRate
+                let rec_start_offset: CGFloat = Double(model.RecordStartTime) * oneSecondLength * model.invEngineSampleRate
                 RoundedRectangle(cornerRadius: 5)
                     .fill(Color.red.mix(with: Color.black, by: 0.2))
                     .frame(width: rec_length, height: 40)

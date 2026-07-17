@@ -32,7 +32,7 @@ struct ContentView: View {
 struct MainOptionsView: View {
     @Environment(AudioEngineModel.self) private var model
     @State private var selectedBufferSize: UInt32 = 512
-    private let availableBufferSizes: [UInt32] = [64, 128, 256, 512]
+    private let availableBufferSizes: [UInt32] = [64, 128, 256, 512, 1024]
     
     var body: some View {
         // Create a bindable reference locally to allow the use of '$'
@@ -113,6 +113,9 @@ struct MainOptionsView: View {
                 .padding(.top, 10)
             VolumeSlider(volume: $bindableModel.volume)
                 .frame(width: 135)
+            
+            BounceButton(model: model)
+                .padding()
         }
         .padding(.leading)
         .frame(minWidth: 160)
@@ -301,6 +304,73 @@ struct VolumeSlider: View {
                     .offset(x: 0, y: -10)
             }
         }
+    }
+}
+
+struct BounceButton: View {
+    let model: AudioEngineModel
+    @State private var isPresentingFilePicker = false
+    @State private var audioDocument: AudioFileDocument? = nil
+    @State private var isBouncing = false
+    
+    var body: some View {
+        if isBouncing {
+            ProgressView("Bouncing Audio...")
+        } else {
+            Button(
+                action: {
+                    bounce()
+                },
+                label: {
+                    Text("Bounce tracks")
+                }
+            )
+            .fileExporter(
+                isPresented: $isPresentingFilePicker,
+                document: audioDocument,
+                contentType: .wav,
+                defaultFilename: "BouncedTrack.wav"
+            ) { result in
+                switch result {
+                case .success(let url):
+                    print("Successfully exported to: \(url.path)")
+                case .failure(let error):
+                    print("Export failed: \(error.localizedDescription)")
+                }
+                // Clean up the temporary file after export attempt
+                cleanupTempFile()
+            }
+            // todo: handle cancellation
+        }
+    }
+    
+    private func bounce() {
+        isBouncing = true
+        
+        // Dispatch to a background queue so we don't freeze the UI during the render
+        DispatchQueue.global(qos: .userInitiated).async {
+            let tempURL = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("temp_bounce.wav")
+            
+            let success = model.Bounce(outputURL: tempURL)
+            
+            DispatchQueue.main.async {
+                self.isBouncing = false
+                if success {
+                    // 2. Prepare the document and trigger the UI sheet
+                    self.audioDocument = AudioFileDocument(tempFileURL: tempURL)
+                    self.isPresentingFilePicker = true
+                } else {
+                    print("Bouncing failed.")
+                }
+            }
+        }
+    }
+    
+    private func cleanupTempFile() {
+        guard let tempURL = audioDocument?.tempFileURL else { return }
+        try? FileManager.default.removeItem(at: tempURL)
+        self.audioDocument = nil
     }
 }
 
