@@ -184,6 +184,14 @@ class Track: Identifiable {
         monitorOn = false
     }
     
+    func delete_region() {
+        RegionStartTime = 0
+        RegionStopTime = 0
+        AudioLengthSeconds = 0.0
+        AudioStartSeconds = 0.0
+        AudioBuffer = nil
+    }
+    
     private func releaseResources(){
         disableMonitoring()
         if let PlayerSourceNode, let engine = Track.engine {

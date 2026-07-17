@@ -437,6 +437,13 @@ struct RegionView: View {
             .frame(width: length, height: 40)
             .offset(x: startOffset)
         }
+        .contextMenu {
+            Button(role: .destructive) {
+                track.delete_region()
+            } label: {
+                Label("Delete Region", systemImage: "trash")
+            }
+        }
     }
 }
 
