@@ -6,6 +6,9 @@
 //
 
 import AVFoundation
+import AudioToolbox
+import AppKit
+import CoreAudioKit
 
 @Observable
 final class AudioEffectsManager {
@@ -19,6 +22,12 @@ final class AudioEffectsManager {
     let distortion = AVAudioUnitDistortion()
     let delay = AVAudioUnitDelay()
     let reverb = AVAudioUnitReverb()
+    
+    static let pluginsManager = AudioPluginsManager()
+    var customPlugin: AVAudioUnit? = nil
+    var customPluginWindow: NSWindowController?
+    var cachedViewController: NSViewController?
+    var windowDelegate: WindowDelegate?
 
     init(model: AudioEngineModel, engine: AVAudioEngine, eqBands: Int = 4) {
         self.eq = AVAudioUnitEQ(numberOfBands: max(1, eqBands))
@@ -34,6 +43,10 @@ final class AudioEffectsManager {
 
         configureDefaults()
         connectChain()
+    }
+    
+    deinit {
+        removeCustomPlugin()
     }
 
     private func configureDefaults() {
@@ -111,8 +124,201 @@ final class AudioEffectsManager {
         engine.connect(reverb, to: mainMixer, format: outputFormat)
     }
     
+    func loadCustomPlugin(id: UUID) {
+        AudioEffectsManager.pluginsManager.loadPlugin(id: id) { unit in
+            guard let unit else { print("Failed to load plugin"); return }
+            self.customPlugin = unit
+            self.connectCustomPlugin()
+        }
+    }
+    
+    func removeCustomPlugin() {
+        guard let customPlugin else { return }
+        if let customPluginWindow {
+            customPluginWindow.close()
+        }
+        engine.disconnectNodeOutput(customPlugin)
+        engine.disconnectNodeOutput(distortion)
+        engine.detach(customPlugin)
+        engine.connect(distortion, to: delay, format: model.outputFormat)
+        self.customPlugin = nil
+        self.customPluginWindow = nil
+        self.cachedViewController = nil
+    }
+    
+    func connectCustomPlugin() {
+        guard let customPlugin else { return }
+        let outputFormat = model.outputFormat
+        engine.attach(customPlugin)
+        engine.disconnectNodeOutput(distortion)
+        engine.connect(distortion, to: customPlugin, format: outputFormat)
+        engine.connect(customPlugin, to: delay, format: outputFormat)
+    }
+    
+    func showAudioUnitInNewWindow() {
+        guard let customPlugin else { return }
+        if (windowDelegate?.isWindowOpen ?? false) {
+            customPluginWindow?.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        if let cachedViewController {
+            CreateWindow(viewController: cachedViewController)
+        } else {
+            loadAudioUnitViewController(unit: customPlugin) { [weak self] viewController in
+                guard let self else { return }
+                var viewController = viewController
+                if viewController == nil { // Fallback: obtain a generic view if the plugin does not provide a custom view
+                    // We generate a generic view mapping its parameters to generic sliders.
+                    let genericViewController = NSViewController()
+                    
+                    // AUGenericView is a native Apple class that automatically parses
+                    // the plugin's parameters and creates sliders for them.
+                    let genericView = AUGenericView(audioUnit: customPlugin.audioUnit)
+                    genericView.showsExpertParameters = true
+                    
+                    genericViewController.view = genericView
+                    viewController = genericViewController
+                }
+                guard let viewController else {
+                    print("Could not load Audio Unit View Controller")  // Generic View also failed
+                    return
+                }
+                self.cachedViewController = viewController
+                self.CreateWindow(viewController: viewController)
+            }
+        }
+    }
+    
+    private func CreateWindow(viewController: NSViewController) {
+        if let existingWindowController = self.customPluginWindow {
+            existingWindowController.showWindow(nil)
+            existingWindowController.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        
+        // 1. Create a standard macOS Window
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), // Default size, AU will usually auto-resize it
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        
+        window.title = customPlugin?.name ?? "Audio Unit Interface"
+        window.center() // Center it on the screen
+        
+        // 2. Assign the AU view controller as the window's content view controller
+        window.contentViewController = viewController
+        
+        // 3. Set the window's delegate to SELF so we can hear when it closes
+        let delegate = WindowDelegate(manager: self)
+        window.delegate = delegate
+        windowDelegate = delegate // Save it to memory
+        
+        // 4. Wrap it in a Window Controller and show it
+        customPluginWindow = NSWindowController(window: window)
+        customPluginWindow?.showWindow(nil)
+    }
+    
     //func firstEffect() -> AVAudio​Node? {
     //    return nil
     //}
+}
+
+class WindowDelegate: NSObject, NSWindowDelegate {
+    weak var manager: AudioEffectsManager?
+    
+    init(manager: AudioEffectsManager) {
+        self.manager = manager
+        super.init()
+    }
+    
+    // Intercept the close command
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Hide the window visually from the screen instead of destroying it
+        sender.orderOut(nil)
+        // Return false so macOS doesn't actually close/deallocate the window
+        return false
+    }
+    
+    func windowWillClose(_ notification: Notification) {
+        if let window = notification.object as? NSWindow {
+            // Sever the view hierarchy connection completely
+            window.contentViewController = nil
+            window.contentView = nil
+        }
+        manager?.customPluginWindow = nil
+        manager?.windowDelegate = nil
+    }
+    
+    var isWindowOpen: Bool {
+        // 1. Is there a window controller?
+        // 2. Is its window loaded?
+        // 3. Is that window currently visible on screen?
+        return manager?.customPluginWindow?.window?.isVisible ?? false
+    }
+}
+
+@Observable
+final class AudioPluginsManager {
+    let Manager = AVAudioUnitComponentManager.shared()
+        
+    struct PluginDescription: Identifiable {
+        let id: UUID
+        let name: String
+        let manufacturer: String
+        let description: AudioComponentDescription
+    }
+    
+    var AllPluginsInfoList: [PluginDescription] = []
+    
+    init() {
+        // search for available effects on the system
+        let effectDescription = AudioComponentDescription(
+            componentType: kAudioUnitType_Effect,
+            componentSubType: 0,
+            componentManufacturer: 0,
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+        
+        let effectComponents = Manager.components(matching: effectDescription)
+        
+        for component in effectComponents {
+            print("Found plugin: \(component.name), manufacturer: \(component.manufacturerName)")
+            AllPluginsInfoList.append(
+                PluginDescription(
+                    id: UUID(),
+                    name: component.name,
+                    manufacturer: component.manufacturerName,
+                    description: component.audioComponentDescription
+                )
+            )
+        }
+    }
+    
+    func loadPlugin(id: UUID, completion: @escaping (AVAudioUnit?) -> Void) {
+        let pluginInfo = AllPluginsInfoList.first(where: { $0.id == id })
+        guard let pluginInfo else { return }
+        let componentDescription = pluginInfo.description
+        
+        AVAudioUnit.instantiate(with: componentDescription, options: [.loadInProcess]) { audioUnit, error in
+            if let audioUnit {
+                completion(audioUnit)
+            } else if let error = error {
+                print("Failed to instantiate plugin: \(error)")
+                completion(nil)
+            }
+        }
+    }
+}
+
+private func loadAudioUnitViewController(unit: AVAudioUnit?, completion: @escaping (NSViewController?) -> Void) {
+    if let unit {
+        // Call our AVAudioUnit extension to request the ViewController
+        unit.auAudioUnit.requestViewController(completionHandler: completion)
+    } else {
+        completion(nil)
+    }
 }
 

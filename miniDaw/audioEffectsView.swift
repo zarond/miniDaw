@@ -445,6 +445,85 @@ struct EQSingleBandControl: View {
     }
 }
 
+struct CustomPluginControl: View {
+    let effects_chain: AudioEffectsManager
+    let unit: AVAudioUnit?
+    
+    @State private var bypass = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle(unit?.name ?? "Custom Plugin", isOn: Binding(
+                get: { !bypass },
+                set: {
+                    bypass = !$0;
+                    unit?.auAudioUnit.shouldBypassEffect = bypass
+                }
+            )).bold()
+            if (!bypass) {
+                HStack() {
+                    Button {
+                        effects_chain.showAudioUnitInNewWindow()
+                    } label: {
+                        Text("Open Plugin Window")
+                    }
+                    Button {
+                        effects_chain.removeCustomPlugin()
+                    } label: {
+                        Text("Remove Plugin")
+                    }
+                }
+            }
+        }.onAppear {
+            bypass = unit?.auAudioUnit.shouldBypassEffect ?? true
+        }
+    }
+}
+
+struct PluginsLoadWindow: View {
+    let effects_chain: AudioEffectsManager
+    let manager = AudioEffectsManager.pluginsManager
+    @State private var show_window = false
+    @State private var selectedPlugin: UUID? = nil
+    
+    var body: some View {
+        let plugins = manager.AllPluginsInfoList
+        
+        Button {
+            show_window = true
+        } label: {
+            Text("Choose Plugin")
+        }
+        .sheet(isPresented: $show_window) {
+            VStack() {
+                Text("Sheet")
+                
+                List(plugins, selection: $selectedPlugin) { plugin in
+                    Text(plugin.name + " - " + plugin.manufacturer).padding(.vertical, 2)
+                }
+                .listStyle(.inset(alternatesRowBackgrounds: true))
+                .frame(height: 500)
+                
+                HStack {
+                    Button("Cancel") {
+                        show_window = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    
+                    Button("Choose") {
+                        if let selectedPlugin {
+                            effects_chain.loadCustomPlugin(id: selectedPlugin)
+                        }
+                        show_window = false
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(selectedPlugin == nil)
+                }
+            }
+            .padding()
+        }
+    }
+}
+
 #Preview {
     let model = AudioEngineModel()
     model.Tracks = [
