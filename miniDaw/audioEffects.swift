@@ -183,6 +183,16 @@ final class AudioEffectsManager {
                     print("Could not load Audio Unit View Controller")  // Generic View also failed
                     return
                 }
+                // Advice for UI performance
+                // Force the View Controller's root view to be layer-backed
+                let pluginView = viewController.view
+                pluginView.wantsLayer = true
+                // Tell the layer to update only when explicitly needed, preventing layout thrashing
+                pluginView.layerContentsRedrawPolicy = .onSetNeedsDisplay
+                // Optional: Force a performance-focused layout mode
+                pluginView.canDrawConcurrently = true
+                // Advice for UI performance
+
                 self.cachedViewController = viewController
                 self.CreateWindow(viewController: viewController)
             }
@@ -209,6 +219,9 @@ final class AudioEffectsManager {
         
         // 2. Assign the AU view controller as the window's content view controller
         window.contentViewController = viewController
+        
+        window.level = .floating
+        window.hidesOnDeactivate = true
         
         // 3. Set the window's delegate to SELF so we can hear when it closes
         let delegate = WindowDelegate(manager: self)
