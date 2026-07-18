@@ -484,6 +484,7 @@ struct PluginsLoadWindow: View {
     let manager = AudioEffectsManager.pluginsManager
     @State private var show_window = false
     @State private var selectedPlugin: UUID? = nil
+    @State private var loadOutOfProcess: Bool = false
     
     var body: some View {
         let plugins = manager.AllPluginsInfoList
@@ -503,6 +504,8 @@ struct PluginsLoadWindow: View {
                 .listStyle(.inset(alternatesRowBackgrounds: true))
                 .frame(height: 500)
                 
+                Toggle("Load plugin out of process. (Try if otherwise doesn't load)", isOn: $loadOutOfProcess)
+                
                 HStack {
                     Button("Cancel") {
                         show_window = false
@@ -511,7 +514,7 @@ struct PluginsLoadWindow: View {
                     
                     Button("Choose") {
                         if let selectedPlugin {
-                            effects_chain.loadCustomPlugin(id: selectedPlugin)
+                            effects_chain.loadCustomPlugin(id: selectedPlugin, outOfProcess: loadOutOfProcess)
                         }
                         show_window = false
                     }

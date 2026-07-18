@@ -124,8 +124,8 @@ final class AudioEffectsManager {
         engine.connect(reverb, to: mainMixer, format: outputFormat)
     }
     
-    func loadCustomPlugin(id: UUID) {
-        AudioEffectsManager.pluginsManager.loadPlugin(id: id) { unit in
+    func loadCustomPlugin(id: UUID, outOfProcess: Bool) {
+        AudioEffectsManager.pluginsManager.loadPlugin(id: id, outOfProcess: outOfProcess) { unit in
             guard let unit else { print("Failed to load plugin"); return }
             self.customPlugin = unit
             self.connectCustomPlugin()
@@ -297,12 +297,13 @@ final class AudioPluginsManager {
         }
     }
     
-    func loadPlugin(id: UUID, completion: @escaping (AVAudioUnit?) -> Void) {
+    func loadPlugin(id: UUID, outOfProcess: Bool, completion: @escaping (AVAudioUnit?) -> Void) {
         let pluginInfo = AllPluginsInfoList.first(where: { $0.id == id })
         guard let pluginInfo else { return }
         let componentDescription = pluginInfo.description
+        let options : AudioComponentInstantiationOptions = outOfProcess ? [.loadOutOfProcess] : [.loadInProcess]
         
-        AVAudioUnit.instantiate(with: componentDescription, options: [.loadInProcess]) { audioUnit, error in
+        AVAudioUnit.instantiate(with: componentDescription, options: options) { audioUnit, error in
             if let audioUnit {
                 completion(audioUnit)
             } else if let error = error {
