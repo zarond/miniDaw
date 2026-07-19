@@ -73,11 +73,8 @@ struct EffectsOptions: View {
         Divider()
         EQBandControl(eq: manager.eq)
         Divider()
-        if manager.customPlugin != nil {
-            CustomPluginControl(effects_chain: manager, unit: manager.customPlugin)
-        } else {
-            PluginsLoadWindow(effects_chain: manager)
-        }
+        CustomPluginsControl(effects_chain: manager)
+        PluginsLoadWindow(effects_chain: manager)
         Divider()
         DistortionControls(distortion: manager.distortion)
         Divider()

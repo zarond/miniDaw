@@ -10,11 +10,129 @@ import AudioToolbox
 import AppKit
 import CoreAudioKit
 
+/// Holds the state for a single custom plugin slot + window delegate
+class CustomPluginSlot: NSObject, NSWindowDelegate {
+    var customPlugin: AVAudioUnit?
+    var customPluginWindow: NSWindowController?
+    var cachedViewController: NSViewController?
+    
+    init(customPlugin: AVAudioUnit) {
+        self.customPlugin = customPlugin
+    }
+    
+    func showWindow() {
+        guard let customPlugin else { return }
+        if (isWindowOpen) {
+            customPluginWindow?.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        
+        if cachedViewController != nil {
+            CreateWindow()
+        } else {
+            loadAudioUnitViewController(unit: customPlugin) { [weak self] viewController in
+                guard let self else { return }
+                var viewController = viewController
+                if viewController == nil { // Fallback: obtain a generic view if the plugin does not provide a custom view
+                    // We generate a generic view mapping its parameters to generic sliders.
+                    let genericViewController = NSViewController()
+                    
+                    // AUGenericView is a native Apple class that automatically parses
+                    // the plugin's parameters and creates sliders for them.
+                    let genericView = AUGenericView(audioUnit: customPlugin.audioUnit)
+                    genericView.showsExpertParameters = true
+                    
+                    genericViewController.view = genericView
+                    viewController = genericViewController
+                }
+                guard let viewController else {
+                    print("Could not load Audio Unit View Controller")  // Generic View also failed
+                    return
+                }
+                // Advice for UI performance
+                // Force the View Controller's root view to be layer-backed
+                let pluginView = viewController.view
+                pluginView.wantsLayer = true
+                // Tell the layer to update only when explicitly needed, preventing layout thrashing
+                pluginView.layerContentsRedrawPolicy = .onSetNeedsDisplay
+                // Optional: Force a performance-focused layout mode
+                pluginView.canDrawConcurrently = true
+                // Advice for UI performance
+
+                // Cache view controller in slot
+                cachedViewController = viewController
+                CreateWindow()
+            }
+        }
+    }
+    
+    /// Create and show a window for the given view controller and plugin slot
+    private func CreateWindow() {
+        guard let viewController = cachedViewController else { return }
+        // Check if window already exists for this slot
+        if let existingWindowController = customPluginWindow {
+            existingWindowController.showWindow(nil)
+            existingWindowController.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        
+        // 1. Create a standard macOS Window
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), // Default size, AU will usually auto-resize it
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        
+        window.title = customPlugin?.name ?? "Audio Unit Interface"
+        window.center() // Center it on the screen
+        
+        // 2. Assign the AU view controller as the window's content view controller
+        window.contentViewController = viewController
+        
+        window.level = .floating
+        window.hidesOnDeactivate = true
+        
+        // 3. Set the window's delegate to SELF so we can hear when it closes
+        window.delegate = self
+        
+        // 4. Wrap it in a Window Controller and show it
+        let windowController = NSWindowController(window: window)
+        customPluginWindow = windowController
+        windowController.showWindow(nil)
+    }
+    
+    // Intercept the close command
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Hide the window visually from the screen instead of destroying it
+        sender.orderOut(nil)
+        // Return false so macOS doesn't actually close/deallocate the window
+        return false
+    }
+    
+    func windowWillClose(_ notification: Notification) {
+        if let window = notification.object as? NSWindow {
+            // Sever the view hierarchy connection completely
+            window.contentViewController = nil
+            window.contentView = nil
+        }
+        // Clear references from the slot to avoid memory leaks
+        customPluginWindow = nil
+    }
+    
+    var isWindowOpen: Bool {
+        // 1. Is there a window controller?
+        // 2. Is its window loaded?
+        // 3. Is that window currently visible on screen?
+        return customPluginWindow?.window?.isVisible ?? false
+    }
+}
+
 @Observable
 final class AudioEffectsManager {
     // Core engine and nodes
-    let model : AudioEngineModel
-    let engine : AVAudioEngine
+    let model: AudioEngineModel
+    let engine: AVAudioEngine
 
     // Effects
     //let timePitch = AVAudioUnitTimePitch() // doesn't work well with monitoring
@@ -24,10 +142,9 @@ final class AudioEffectsManager {
     let reverb = AVAudioUnitReverb()
     
     static let pluginsManager = AudioPluginsManager()
-    var customPlugin: AVAudioUnit? = nil
-    var customPluginWindow: NSWindowController?
-    var cachedViewController: NSViewController?
-    var windowDelegate: WindowDelegate?
+    
+    /// Array of custom plugin slots, supporting multiple plugins in the chain
+    var customPlugins: [CustomPluginSlot] = []
 
     init(model: AudioEngineModel, engine: AVAudioEngine, eqBands: Int = 4) {
         self.eq = AVAudioUnitEQ(numberOfBands: max(1, eqBands))
@@ -46,7 +163,10 @@ final class AudioEffectsManager {
     }
     
     deinit {
-        removeCustomPlugin()
+        // Remove all plugins safely
+        for index in customPlugins.indices.reversed() {
+            removeCustomPlugin(at: index)
+        }
     }
 
     private func configureDefaults() {
@@ -112,163 +232,96 @@ final class AudioEffectsManager {
         reverb.bypass = true
     }
 
+    /// Connect the audio chain:
+    /// EQ → Distortion → [Custom Plugins in sequence] → Delay → Reverb → Main Mixer
     private func connectChain() {
         let mainMixer = engine.mainMixerNode
         let outputFormat = model.outputFormat
 
-        // EQ → Distortion → Delay → Reverb
-        //engine.connect(timePitch, to: eq, format: outputFormat)
+        // Disconnect everything first
+        engine.disconnectNodeOutput(eq)
+        engine.disconnectNodeOutput(distortion)
+        engine.disconnectNodeOutput(delay)
+        engine.disconnectNodeOutput(reverb)
+        for slot in customPlugins {
+            if let plugin = slot.customPlugin {
+                engine.disconnectNodeOutput(plugin)
+            }
+        }
+        
+        // Connect EQ to Distortion
         engine.connect(eq, to: distortion, format: outputFormat)
-        engine.connect(distortion, to: delay, format: outputFormat)
+        
+        // Connect Distortion to first custom plugin or Delay if none
+        var previousNode: AVAudioNode = distortion
+        
+        for slot in customPlugins {
+            guard let plugin = slot.customPlugin else { continue }
+            // Attach if not attached
+            if !engine.attachedNodes.contains(plugin) {
+                engine.attach(plugin)
+            }
+            engine.connect(previousNode, to: plugin, format: outputFormat)
+            previousNode = plugin
+        }
+        
+        // Connect last custom plugin (or distortion if none) to Delay
+        engine.connect(previousNode, to: delay, format: outputFormat)
         engine.connect(delay, to: reverb, format: outputFormat)
         engine.connect(reverb, to: mainMixer, format: outputFormat)
     }
     
+    /// Load a new custom plugin and insert it at the end of the custom plugins chain
     func loadCustomPlugin(id: UUID, outOfProcess: Bool) {
         AudioEffectsManager.pluginsManager.loadPlugin(id: id, outOfProcess: outOfProcess) { unit in
-            guard let unit else { print("Failed to load plugin"); return }
-            self.customPlugin = unit
-            self.connectCustomPlugin()
-        }
-    }
-    
-    func removeCustomPlugin() {
-        guard let customPlugin else { return }
-        if let customPluginWindow {
-            customPluginWindow.close()
-        }
-        engine.disconnectNodeOutput(customPlugin)
-        engine.disconnectNodeOutput(distortion)
-        engine.detach(customPlugin)
-        engine.connect(distortion, to: delay, format: model.outputFormat)
-        self.customPlugin = nil
-        self.customPluginWindow = nil
-        self.cachedViewController = nil
-    }
-    
-    func connectCustomPlugin() {
-        guard let customPlugin else { return }
-        let outputFormat = model.outputFormat
-        engine.attach(customPlugin)
-        engine.disconnectNodeOutput(distortion)
-        engine.connect(distortion, to: customPlugin, format: outputFormat)
-        engine.connect(customPlugin, to: delay, format: outputFormat)
-    }
-    
-    func showAudioUnitInNewWindow() {
-        guard let customPlugin else { return }
-        if (windowDelegate?.isWindowOpen ?? false) {
-            customPluginWindow?.window?.makeKeyAndOrderFront(nil)
-            return
-        }
-        if let cachedViewController {
-            CreateWindow(viewController: cachedViewController)
-        } else {
-            loadAudioUnitViewController(unit: customPlugin) { [weak self] viewController in
-                guard let self else { return }
-                var viewController = viewController
-                if viewController == nil { // Fallback: obtain a generic view if the plugin does not provide a custom view
-                    // We generate a generic view mapping its parameters to generic sliders.
-                    let genericViewController = NSViewController()
-                    
-                    // AUGenericView is a native Apple class that automatically parses
-                    // the plugin's parameters and creates sliders for them.
-                    let genericView = AUGenericView(audioUnit: customPlugin.audioUnit)
-                    genericView.showsExpertParameters = true
-                    
-                    genericViewController.view = genericView
-                    viewController = genericViewController
-                }
-                guard let viewController else {
-                    print("Could not load Audio Unit View Controller")  // Generic View also failed
-                    return
-                }
-                // Advice for UI performance
-                // Force the View Controller's root view to be layer-backed
-                let pluginView = viewController.view
-                pluginView.wantsLayer = true
-                // Tell the layer to update only when explicitly needed, preventing layout thrashing
-                pluginView.layerContentsRedrawPolicy = .onSetNeedsDisplay
-                // Optional: Force a performance-focused layout mode
-                pluginView.canDrawConcurrently = true
-                // Advice for UI performance
-
-                self.cachedViewController = viewController
-                self.CreateWindow(viewController: viewController)
+            guard let unit else {
+                print("Failed to load plugin")
+                return
             }
+            
+            // Create new slot and append
+            let slot = CustomPluginSlot(customPlugin: unit)
+            self.customPlugins.append(slot)
+            
+            // Attach node to engine
+            self.engine.attach(unit)
+            
+            // Reconnect chain to include new plugin
+            self.connectChain()
         }
     }
     
-    private func CreateWindow(viewController: NSViewController) {
-        if let existingWindowController = self.customPluginWindow {
-            existingWindowController.showWindow(nil)
-            existingWindowController.window?.makeKeyAndOrderFront(nil)
-            return
+    /// Remove the custom plugin at a specified index from the chain
+    func removeCustomPlugin(at index: Int) {
+        guard customPlugins.indices.contains(index) else { return }
+        let slot = customPlugins[index]
+        
+        if let customPlugin = slot.customPlugin {
+            if let window = slot.customPluginWindow {
+                window.close()
+            }
+            engine.disconnectNodeOutput(customPlugin)
+            engine.detach(customPlugin)
         }
         
-        // 1. Create a standard macOS Window
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), // Default size, AU will usually auto-resize it
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        
-        window.title = customPlugin?.name ?? "Audio Unit Interface"
-        window.center() // Center it on the screen
-        
-        // 2. Assign the AU view controller as the window's content view controller
-        window.contentViewController = viewController
-        
-        window.level = .floating
-        window.hidesOnDeactivate = true
-        
-        // 3. Set the window's delegate to SELF so we can hear when it closes
-        let delegate = WindowDelegate(manager: self)
-        window.delegate = delegate
-        windowDelegate = delegate // Save it to memory
-        
-        // 4. Wrap it in a Window Controller and show it
-        customPluginWindow = NSWindowController(window: window)
-        customPluginWindow?.showWindow(nil)
+        customPlugins.remove(at: index)
+        connectChain()
     }
     
-    //func firstEffect() -> AVAudio​Node? {
-    //    return nil
-    //}
-}
-
-class WindowDelegate: NSObject, NSWindowDelegate {
-    weak var manager: AudioEffectsManager?
-    
-    init(manager: AudioEffectsManager) {
-        self.manager = manager
-        super.init()
+    /// Swap the positions of two custom plugins in the chain, reconnecting afterwards
+    func swapPlugins(at indexA: Int, with indexB: Int) {
+        guard customPlugins.indices.contains(indexA) && customPlugins.indices.contains(indexB) else { return }
+        guard indexA != indexB else { return }
+        
+        customPlugins.swapAt(indexA, indexB)
+        connectChain()
     }
     
-    // Intercept the close command
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        // Hide the window visually from the screen instead of destroying it
-        sender.orderOut(nil)
-        // Return false so macOS doesn't actually close/deallocate the window
-        return false
-    }
-    
-    func windowWillClose(_ notification: Notification) {
-        if let window = notification.object as? NSWindow {
-            // Sever the view hierarchy connection completely
-            window.contentViewController = nil
-            window.contentView = nil
-        }
-        manager?.customPluginWindow = nil
-        manager?.windowDelegate = nil
-    }
-    
-    var isWindowOpen: Bool {
-        // 1. Is there a window controller?
-        // 2. Is its window loaded?
-        // 3. Is that window currently visible on screen?
-        return manager?.customPluginWindow?.window?.isVisible ?? false
+    /// Show the audio unit UI in a new window for the plugin at the specified index
+    func showAudioUnitInNewWindow(at index: Int) {
+        guard customPlugins.indices.contains(index) else { return }
+        let slot = customPlugins[index]
+        slot.showWindow()
     }
 }
 
@@ -335,4 +388,3 @@ private func loadAudioUnitViewController(unit: AVAudioUnit?, completion: @escapi
         completion(nil)
     }
 }
-

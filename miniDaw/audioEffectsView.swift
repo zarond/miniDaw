@@ -445,37 +445,74 @@ struct EQSingleBandControl: View {
     }
 }
 
+struct CustomPluginsControl: View {
+    let effects_chain: AudioEffectsManager
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            ForEach(effects_chain.customPlugins.enumerated(), id: \.offset) { index, pluginSlot in
+                CustomPluginControl(effects_chain: effects_chain, unit: pluginSlot.customPlugin, index: index)
+            }
+        }
+    }
+}
+
 struct CustomPluginControl: View {
     let effects_chain: AudioEffectsManager
     let unit: AVAudioUnit?
+    let index: Int
     
     @State private var bypass = false
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading) {
             Toggle(unit?.name ?? "Custom Plugin", isOn: Binding(
                 get: { !bypass },
                 set: {
-                    bypass = !$0;
+                    bypass = !$0
                     unit?.auAudioUnit.shouldBypassEffect = bypass
                 }
             )).bold()
-            if (!bypass) {
+            
+            if !bypass {
                 HStack() {
                     Button {
-                        effects_chain.showAudioUnitInNewWindow()
+                        effects_chain.showAudioUnitInNewWindow(at: index)
                     } label: {
-                        Text("Open Plugin Window")
+                        Text("Open Plugin")
                     }
+                    if index > 0 {
+                        Button {
+                            effects_chain.swapPlugins(at: index, with: index - 1)
+                        } label: {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .help("Move Plugin Up")
+                    }
+                    if index < effects_chain.customPlugins.count - 1 {
+                        Button {
+                            effects_chain.swapPlugins(at: index, with: index + 1)
+                        } label: {
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .help("Move Plugin Down")
+                    }
+                    
+                    Spacer()
+                    
                     Button {
-                        effects_chain.removeCustomPlugin()
+                        effects_chain.removeCustomPlugin(at: index)
                     } label: {
-                        Text("Remove Plugin")
+                        Image(systemName: "trash").foregroundStyle(.red)
                     }
                 }
             }
         }.onAppear {
             bypass = unit?.auAudioUnit.shouldBypassEffect ?? true
         }
+        Divider()
     }
 }
 
@@ -492,7 +529,7 @@ struct PluginsLoadWindow: View {
         Button {
             show_window = true
         } label: {
-            Text("Choose Plugin")
+            Text("Add Plugin")
         }
         .sheet(isPresented: $show_window) {
             VStack() {
