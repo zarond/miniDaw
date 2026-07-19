@@ -22,26 +22,17 @@ class Track: Identifiable {
     
     var volume: Float = 1.0 {
         didSet {
-            PlayerSourceNode?.volume = mute ? 0.0 : volume
-            if monitorOn {
-                Track.model?.inputNode?.volume = mute ? 0.0 : volume
-            }
+            postFXMixer.volume = mute ? 0.0 : volume
         }
     }
     var mute: Bool = false {
         didSet {
-            PlayerSourceNode?.volume = mute ? 0.0 : volume
-            if monitorOn {
-                Track.model?.inputNode?.volume = mute ? 0.0 : volume
-            }
+            postFXMixer.volume = mute ? 0.0 : volume
         }
     }
     var pan: Float = 0.0 {
         didSet {
-            PlayerSourceNode?.pan = pan
-            if monitorOn {
-                Track.model?.inputNode?.pan = pan
-            }
+            postFXMixer.pan = pan
         }
     }
     private(set) var monitorOn: Bool = false
@@ -51,6 +42,7 @@ class Track: Identifiable {
     
     private var PlayerSourceNode: AVAudioSourceNode? = nil
     let preFXMixer = AVAudioMixerNode()
+    let postFXMixer = AVAudioMixerNode()
     
     var TrackFormat = AVAudioFormat()
     var AudioLengthSeconds : Double = 0.0
@@ -91,6 +83,7 @@ class Track: Identifiable {
         }
         
         engine.attach(preFXMixer)
+        engine.attach(postFXMixer)
         
         if let PlayerSourceNode {
             engine.connect(
@@ -102,7 +95,16 @@ class Track: Identifiable {
         engine.connect(
             preFXMixer,
             to: effectsManager!.eq,
-            //to: engine.mainMixerNode,
+            format: outputFormat)
+        
+        engine.connect(
+            effectsManager!.reverb,
+            to: postFXMixer,
+            format: outputFormat)
+        
+        engine.connect(
+            postFXMixer,
+            to: engine.mainMixerNode,
             format: outputFormat)
     }
     
@@ -163,9 +165,6 @@ class Track: Identifiable {
         // Connect input to main mixer
         let inputFormat = model.inputFormat
         engine.connect(model.inputNode!, to: preFXMixer, format: inputFormat)
-
-        model.inputNode?.volume = mute ? 0.0 : volume
-        model.inputNode?.pan = pan
         
         monitorOn = true
     }
@@ -177,9 +176,6 @@ class Track: Identifiable {
         guard let model = Track.model else { return }
 
         engine.disconnectNodeOutput(model.inputNode!)
-        
-        model.inputNode?.volume = 1.0
-        model.inputNode?.pan = 0.0
 
         monitorOn = false
     }

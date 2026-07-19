@@ -89,8 +89,6 @@ class CustomPluginSlot: NSObject, NSWindowDelegate {
         
         // 2. Assign the AU view controller as the window's content view controller
         window.contentViewController = viewController
-        
-        window.level = .floating
         window.hidesOnDeactivate = true
         
         // 3. Set the window's delegate to SELF so we can hear when it closes
@@ -233,16 +231,14 @@ final class AudioEffectsManager {
     }
 
     /// Connect the audio chain:
-    /// EQ → Distortion → [Custom Plugins in sequence] → Delay → Reverb → Main Mixer
+    /// EQ → Distortion → [Custom Plugins in sequence] → Delay → Reverb → postFXMixer→Main Mixer (last two are in Track class.)
     private func connectChain() {
-        let mainMixer = engine.mainMixerNode
         let outputFormat = model.outputFormat
 
         // Disconnect everything first
         engine.disconnectNodeOutput(eq)
         engine.disconnectNodeOutput(distortion)
         engine.disconnectNodeOutput(delay)
-        engine.disconnectNodeOutput(reverb)
         for slot in customPlugins {
             if let plugin = slot.customPlugin {
                 engine.disconnectNodeOutput(plugin)
@@ -268,7 +264,6 @@ final class AudioEffectsManager {
         // Connect last custom plugin (or distortion if none) to Delay
         engine.connect(previousNode, to: delay, format: outputFormat)
         engine.connect(delay, to: reverb, format: outputFormat)
-        engine.connect(reverb, to: mainMixer, format: outputFormat)
     }
     
     /// Load a new custom plugin and insert it at the end of the custom plugins chain
