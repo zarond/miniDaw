@@ -109,6 +109,18 @@ struct MainOptionsView: View {
             }
             .toggleStyle(.checkbox)
             
+            let latencyBinding = Binding<Bool>(
+                get: { model.inputLatencyFrames != 0 },
+                set: { newValue in
+                    model.useLatencyCompensation(newValue)
+                }
+            )
+            Toggle(isOn: latencyBinding) {
+                Text("Latency Comp.")
+            }
+            .help("Use Latency Compensation")
+            .toggleStyle(.checkbox)
+            
             Text("Output Sound Volume:")
                 .padding(.top, 10)
             VolumeSlider(volume: $bindableModel.volume)

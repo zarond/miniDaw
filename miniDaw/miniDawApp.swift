@@ -101,6 +101,7 @@ class AudioEngineModel {
     }
     private(set) var invEngineSampleRate : Double = 1 / 44100.0
     private(set) var IOBufferSize : UInt32 = 512
+    private(set) var inputLatencyFrames: AVAudioFramePosition = 0
     
     var metronomeAudioBuffer = AVAudioPCMBuffer()
     var metronomeHighAudioBuffer = AVAudioPCMBuffer()
@@ -118,7 +119,7 @@ class AudioEngineModel {
     private var stereoInputIsAvailable = false
     
     var inputRecordBuffer = AVAudioPCMBuffer()
-    var RecordTime = AVAudioFramePosition()         // relative time on timeline
+    var InputStartTime = AVAudioFramePosition()     // absolute time of input node
     var RecordStartTime = AVAudioFramePosition()    // relative time on timeline
     var RecordStopTime = AVAudioFramePosition()     // relative time on timeline
     
@@ -230,6 +231,7 @@ class AudioEngineModel {
 
         do {
             try engine.start()
+            recalculateInputLatencyFrames()
             isPlayerReady = true
         } catch {
             print("Error starting the player: \(error)")
@@ -278,8 +280,25 @@ class AudioEngineModel {
         
         if status == noErr {
             print("Successfully set hardware buffer size to \(bufferSize) frames.")
+            IOBufferSize = bufferSize
         } else {
             print("Failed to set buffer size. Core Audio Error code: \(status)")
+        }
+    }
+    
+    private func recalculateInputLatencyFrames() {
+        let presentationLatencySec = inputNode?.presentationLatency ?? 0
+        let ioBufferDurationSec = Double(IOBufferSize) / EngineSampleRate
+        let totalLatencySec = presentationLatencySec + ioBufferDurationSec
+        inputLatencyFrames = AVAudioFramePosition(totalLatencySec * EngineSampleRate)
+        print("Input latency (frames):", inputLatencyFrames)
+    }
+    
+    func useLatencyCompensation(_ isEnabled: Bool) {
+        if isEnabled {
+            recalculateInputLatencyFrames()
+        } else {
+            inputLatencyFrames = 0
         }
     }
     
@@ -323,6 +342,7 @@ class AudioEngineModel {
         }
         EngineSampleRate = outputFormat.sampleRate
         
+        recalculateInputLatencyFrames()
         installInputTap(bufferSize: newSize)
         
         setupAnimation()
@@ -330,7 +350,6 @@ class AudioEngineModel {
         recalculate_timeline_length()
         recalculate_samples_per_beat()
         
-        IOBufferSize = newSize
         return true
     }
 
@@ -339,15 +358,23 @@ class AudioEngineModel {
         
         inputNode!.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] (buffer, time) in
             guard let self = self else { return }
-            if (!self.isRecording) { return }
+            guard self.isRecording else { return }
             let master = self.inputRecordBuffer
-            self.RecordTime %= TimelineLength
-            if (self.RecordTime < 0) {
-                self.RecordTime += self.TimelineLength
+            
+            let inputSampleTime = AVAudioFramePosition(time.sampleTime)
+            
+            // Compute where these samples belong relative to transport start,
+            // compensating for input latency (presentationLatency + IO buffer duration).
+            var writePosition = inputSampleTime - self.InputStartTime - self.inputLatencyFrames
+            
+            // Wrap into the timeline range for looping
+            writePosition %= self.TimelineLength
+            if writePosition < 0 {
+                writePosition += self.TimelineLength
             }
-            copyBuffer(from: buffer, to: master, atOffset: self.RecordTime, startFrameSrc: 0,
+            
+            copyBuffer(from: buffer, to: master, atOffset: writePosition, startFrameSrc: 0,
                        frameNumberSrc: buffer.frameLength, loop: true)
-            self.RecordTime += AVAudioFramePosition(buffer.frameLength)
         }
     }
     
@@ -405,6 +432,7 @@ class AudioEngineModel {
                 currTime -= AVAudioFramePosition(samplesPerBeat * Double(TimeSignatureHigh))
             }
             startTime = now.sampleTime - currTime
+            InputStartTime = inputNode?.lastRenderTime?.sampleTime ?? startTime - currTime
         }
         
         update_current_time_seconds()
@@ -444,7 +472,6 @@ class AudioEngineModel {
             start(start_recording: true)
         }
         RecordStartTime = currTime + (!already_playing && preCount ? AVAudioFramePosition(samplesPerBeat * Double(TimeSignatureHigh)) : 0)
-        RecordTime = currTime
         isRecording = true
     }
     
@@ -469,6 +496,7 @@ class AudioEngineModel {
         }
         
         startTime = now.sampleTime
+        InputStartTime = inputNode?.lastRenderTime?.sampleTime ?? startTime
         currTime = AVAudioFramePosition(0)
         currTimeSeconds = 0.0
         
