@@ -63,7 +63,7 @@ class Track: Identifiable {
         guard let engine = Track.engine else { return }
         guard let model = Track.model else { return }
         
-        effectsManager = AudioEffectsManager(model: model, engine: engine)
+        effectsManager = AudioEffectsManager(model: model, engine: engine, track: self)
         
         let outputFormat = Track.model!.outputFormat
         TrackFormat = outputFormat

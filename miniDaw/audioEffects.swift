@@ -15,9 +15,11 @@ class CustomPluginSlot: NSObject, NSWindowDelegate {
     var customPlugin: AVAudioUnit?
     var customPluginWindow: NSWindowController?
     var cachedViewController: NSViewController?
+    weak var effectsChain: AudioEffectsManager?
     
-    init(customPlugin: AVAudioUnit) {
+    init(customPlugin: AVAudioUnit, effectsChain: AudioEffectsManager?) {
         self.customPlugin = customPlugin
+        self.effectsChain = effectsChain
     }
     
     func showWindow() {
@@ -71,6 +73,7 @@ class CustomPluginSlot: NSObject, NSWindowDelegate {
         guard let viewController = cachedViewController else { return }
         // Check if window already exists for this slot
         if let existingWindowController = customPluginWindow {
+            updateWindowTitle()
             existingWindowController.showWindow(nil)
             existingWindowController.window?.makeKeyAndOrderFront(nil)
             return
@@ -84,7 +87,8 @@ class CustomPluginSlot: NSObject, NSWindowDelegate {
             defer: false
         )
         
-        window.title = customPlugin?.name ?? "Audio Unit Interface"
+        let trackName = effectsChain?.track?.name ?? "Unknown track"
+        window.title = (customPlugin?.name ?? "Audio Unit Interface") + " - " + trackName
         window.center() // Center it on the screen
         
         // 2. Assign the AU view controller as the window's content view controller
@@ -124,6 +128,12 @@ class CustomPluginSlot: NSObject, NSWindowDelegate {
         // 3. Is that window currently visible on screen?
         return customPluginWindow?.window?.isVisible ?? false
     }
+    
+    func updateWindowTitle() {
+        guard let window = customPluginWindow?.window else { return }
+        let trackName = effectsChain?.track?.name ?? "Unknown track"
+        window.title = (customPlugin?.name ?? "Audio Unit Interface") + " - " + trackName
+    }
 }
 
 @Observable
@@ -131,6 +141,7 @@ final class AudioEffectsManager {
     // Core engine and nodes
     let model: AudioEngineModel
     let engine: AVAudioEngine
+    weak var track: Track?
 
     // Effects
     //let timePitch = AVAudioUnitTimePitch() // doesn't work well with monitoring
@@ -144,10 +155,11 @@ final class AudioEffectsManager {
     /// Array of custom plugin slots, supporting multiple plugins in the chain
     var customPlugins: [CustomPluginSlot] = []
 
-    init(model: AudioEngineModel, engine: AVAudioEngine, eqBands: Int = 4) {
+    init(model: AudioEngineModel, engine: AVAudioEngine, track: Track?, eqBands: Int = 4) {
         self.eq = AVAudioUnitEQ(numberOfBands: max(1, eqBands))
         self.model = model
         self.engine = engine
+        self.track = track
         
         // Attach nodes
         //engine.attach(timePitch)
@@ -275,7 +287,7 @@ final class AudioEffectsManager {
             }
             
             // Create new slot and append
-            let slot = CustomPluginSlot(customPlugin: unit)
+            let slot = CustomPluginSlot(customPlugin: unit, effectsChain: self)
             self.customPlugins.append(slot)
             
             // Attach node to engine
