@@ -432,7 +432,7 @@ class AudioEngineModel {
                 currTime -= AVAudioFramePosition(samplesPerBeat * Double(TimeSignatureHigh))
             }
             startTime = now.sampleTime - currTime
-            InputStartTime = inputNode?.lastRenderTime?.sampleTime ?? startTime - currTime
+            InputStartTime = (inputNode?.lastRenderTime?.sampleTime ?? startTime) - currTime
         }
         
         update_current_time_seconds()
@@ -464,11 +464,10 @@ class AudioEngineModel {
         if (currentlySelectedTrack.type != .recordingTrack) { return }
         
         currentlyRecordingTrack = currentlySelectedTrack
-        if (isPlaying) {
-            update_current_time_with_reset_to_timeline_range()
-        }
         let already_playing = isPlaying
-        if (!already_playing) {
+        if (already_playing) {
+            update_current_time_with_reset_to_timeline_range()
+        } else {
             start(start_recording: true)
         }
         RecordStartTime = currTime + (!already_playing && preCount ? AVAudioFramePosition(samplesPerBeat * Double(TimeSignatureHigh)) : 0)
